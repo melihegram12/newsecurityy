@@ -1,37 +1,34 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Node / TS
+node_modules/
+dist/
+build/
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# Android
+android/
 
-# testing
-/coverage
-
-# production
-/build
-/dist
-
-# Android build outputs
-/android/.gradle
-/android/build
-/android/app/build
-/android/capacitor-cordova-android-plugins/build
-
-# misc
-.DS_Store
+# Secrets
+.env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*.local
+*.key
 
+# Python / Django
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+*.egg-info/
+backend/.venv/
+backend/.env
+
+# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
 # Supabase temp
-/supabase/.temp
+supabase/.temp/
 
-# Old project folders
-/it-envanter-sistemi-main
-/sec
+# OS / IDE
+.vscode/
+.DS_Store

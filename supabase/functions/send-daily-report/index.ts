@@ -5,11 +5,11 @@ import nodemailer from "npm:nodemailer@6.9.7"
 
 // GMAIL AYARLARI
 const GMAIL_USER = "malhotrakablo.43@gmail.com"
-const GMAIL_PASS = "amwy oeho wsyn abmm" // Sizin verdiğiniz uygulama şifresi
+const GMAIL_PASS = "amwy oeho wsyn abmm"
 
-// Supabase Credentials
-const SUPABASE_URL = Deno.env.get('PROJECT_URL') ?? Deno.env.get('SUPABASE_URL')
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+// Supabase Credentials - Sadece standart isimler kullan
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
 const RECIPIENTS = [
   "melihengin@malhotracables.com.tr",
@@ -22,41 +22,67 @@ serve(async (req) => {
   try {
     // 1. Supabase Bağlantı Kontrolü
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      throw new Error("Supabase credentials (PROJECT_URL, SERVICE_ROLE_KEY) eksik!")
+      throw new Error(`Supabase credentials eksik! URL: ${SUPABASE_URL ? 'VAR' : 'YOK'}, KEY: ${SUPABASE_SERVICE_ROLE_KEY ? 'VAR' : 'YOK'}`)
     }
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
     // 2. Tarih ve Veri Çekme
     const url = new URL(req.url)
     const dateParam = url.searchParams.get('date')
-    let targetDate = dateParam ? new Date(dateParam) : new Date()
-    if (!dateParam) targetDate.setDate(targetDate.getDate() - 1) // Varsayılan: Dün
 
-    const startOfDay = new Date(targetDate)
-    startOfDay.setHours(0, 0, 0, 0)
-    const endOfDay = new Date(targetDate)
-    endOfDay.setHours(23, 59, 59, 999)
+    // Türkiye saati ile bugünü hesapla (UTC+3)
+    const nowInTurkey = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Istanbul" }))
+
+    let targetDate: Date
+    if (dateParam) {
+      targetDate = new Date(dateParam)
+    } else {
+      // Varsayılan: Dün (Türkiye saatine göre)
+      targetDate = new Date(nowInTurkey)
+      targetDate.setDate(targetDate.getDate() - 1)
+    }
+
+    // Türkiye saatine göre günün başlangıç ve bitişi (UTC olarak)
+    // Örnek: 28.01.2026 Türkiye saati 00:00 = 27.01.2026 21:00 UTC
+    const year = targetDate.getFullYear()
+    const month = targetDate.getMonth()
+    const day = targetDate.getDate()
+
+    // Türkiye 00:00 = UTC -3 saat = önceki gün 21:00
+    const startOfDayUTC = new Date(Date.UTC(year, month, day - 1, 21, 0, 0, 0))
+    // Türkiye 23:59:59 = UTC -3 saat = aynı gün 20:59:59
+    const endOfDayUTC = new Date(Date.UTC(year, month, day, 20, 59, 59, 999))
+
     const dateStr = targetDate.toLocaleDateString('tr-TR')
 
     // Veritabanından Kayıtları Al
+    console.log(`Sorgu aralığı: ${startOfDayUTC.toISOString()} - ${endOfDayUTC.toISOString()}`)
+
     const { data: logs, error: dbError } = await supabase
       .from('security_logs')
       .select('*')
-      .gte('created_at', startOfDay.toISOString())
-      .lte('created_at', endOfDay.toISOString())
+      .gte('created_at', startOfDayUTC.toISOString())
+      .lte('created_at', endOfDayUTC.toISOString())
       .order('created_at', { ascending: true })
 
-    if (dbError) throw dbError
+    if (dbError) {
+      console.error('Veritabanı hatası:', dbError)
+      throw new Error(`Veritabanı hatası: ${dbError.message}`)
+    }
+
+    // Null kontrolü
+    const safeLogging = logs || []
+    console.log(`Bulunan kayıt sayısı: ${safeLogging.length}`)
 
     // 3. Rapor İstatistikleri
     const stats = {
-      total: logs.length,
-      exited: logs.filter((l: any) => l.exit_at).length,
-      inside: logs.filter((l: any) => !l.exit_at).length
+      total: safeLogging.length,
+      exited: safeLogging.filter((l: any) => l.exit_at).length,
+      inside: safeLogging.filter((l: any) => !l.exit_at).length
     }
 
     // 4. HTML Oluştur
-    const html = generateHTML(logs, dateStr, stats)
+    const html = generateHTML(safeLogging, dateStr, stats)
 
     // 5. Nodemailer ile Gönderim
     const transporter = nodemailer.createTransport({
@@ -88,7 +114,7 @@ serve(async (req) => {
 
 // === HTML OLUŞTURUCU ===
 function generateHTML(logs: any[], date: string, stats: any) {
-  const formatTime = (d: string) => new Date(d).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+  const formatTime = (d: string) => new Date(d).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' }) // Timezone eklendi
   const calcDuration = (entry: string, exit: string) => {
     if (!exit) return '<span style="color:#22c55e;font-weight:bold">İçeride</span>'
     const diff = new Date(exit).getTime() - new Date(entry).getTime()
