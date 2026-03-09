@@ -2,9 +2,9 @@ services:
   db:
     image: postgres:16
     environment:
-      POSTGRES_DB: security
-      POSTGRES_USER: security
-      POSTGRES_PASSWORD: security
+      POSTGRES_DB: ${DB_NAME:-security}
+      POSTGRES_USER: ${DB_USER:-security}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-security}
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -20,9 +20,9 @@ services:
       DJANGO_SECRET_KEY: dev-insecure-secret-key-change-me
       DJANGO_DEBUG: "1"
       DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0,10.166.1.23"
-      DB_NAME: security
-      DB_USER: security
-      DB_PASSWORD: security
+      DB_NAME: ${DB_NAME:-security}
+      DB_USER: ${DB_USER:-security}
+      DB_PASSWORD: ${DB_PASSWORD:-security}
       DB_HOST: db
       DB_PORT: "5432"
       LOCAL_SYNC_API_KEY: "${REACT_APP_LOCAL_API_KEY}"
