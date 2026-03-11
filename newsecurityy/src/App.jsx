@@ -14,7 +14,7 @@ import {
   OFFLINE_QUEUE_KEY, BUILD_TIME, LOCAL_API_URL_KEY, LOCAL_API_KEY_KEY,
   LOCAL_API_TOKEN_KEY, LOCAL_ROLE_SESSION_KEY, ACTIVE_ROLE_KEY, ACTION_LOGS_KEY,
   LOCAL_SYNC_ENABLED, LOCAL_API_DEFAULT_URL, SHOW_SYNC_PANEL_KEY, SHOW_SMTP_PANEL_KEY,
-  SHOW_HISTORY_PANEL_KEY, LITE_MODE_KEY, FEATURE_FLAGS_KEY, ATTACHMENTS_SETTINGS_KEY,
+  SHOW_HISTORY_PANEL_KEY, LITE_MODE_KEY, LITE_MODE_OVERRIDE_KEY, FEATURE_FLAGS_KEY, ATTACHMENTS_SETTINGS_KEY,
   SUPABASE_SYNC_QUEUE_KEY, LOCAL_SYNC_QUEUE_KEY, MAX_ATTACHMENTS_PER_LOG,
   MAX_ATTACHMENT_SIZE_BYTES, REPORT_RENDER_LIMIT_NORMAL, REPORT_PAGE_SIZE_NORMAL,
   REPORT_PAGE_SIZE_LITE, DIRECTION_ENTRY, DIRECTION_EXIT, DEFAULT_FEATURE_FLAGS,
@@ -86,7 +86,13 @@ export default function App() {
       return false;
     }
   });
-  const [liteMode, setLiteMode] = useState(() => localStorage.getItem(LITE_MODE_KEY) === '1');
+  const [liteMode, setLiteMode] = useState(() => {
+    const manualOverride = localStorage.getItem(LITE_MODE_OVERRIDE_KEY);
+    if (manualOverride !== null) return manualOverride === '1';
+    const savedRole = localStorage.getItem(ACTIVE_ROLE_KEY);
+    if (savedRole === ROLE_SECURITY) return true;
+    return localStorage.getItem(LITE_MODE_KEY) === '1';
+  });
   const [featureFlags, setFeatureFlags] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(FEATURE_FLAGS_KEY) || '{}');
@@ -800,6 +806,7 @@ export default function App() {
       localStorage.removeItem(LOCAL_API_TOKEN_KEY);
       localStorage.removeItem(LOCAL_ROLE_SESSION_KEY);
       localStorage.removeItem(ACTIVE_ROLE_KEY);
+      localStorage.removeItem(LITE_MODE_OVERRIDE_KEY);
     } catch (e) {
       // ignore
     }
@@ -2420,6 +2427,18 @@ const sendDailyReport = useCallback((dateParam) => {
   useEffect(() => { localStorage.setItem('soundEnabled', soundEnabled); }, [soundEnabled]);
   useEffect(() => { localStorage.setItem(LITE_MODE_KEY, liteMode ? '1' : '0'); }, [liteMode]);
 
+  // Auto-enable lite mode for security role when no manual override exists
+  useEffect(() => {
+    if (!session) return;
+    const hasManualOverride = localStorage.getItem(LITE_MODE_OVERRIDE_KEY) !== null;
+    if (hasManualOverride) return;
+    if (activeRole === ROLE_SECURITY) {
+      setLiteMode(true);
+    } else if (activeRole === ROLE_DEVELOPER || activeRole === ROLE_HR) {
+      setLiteMode(false);
+    }
+  }, [session, activeRole]);
+
   useEffect(() => {
     if (!session) return;
     appendActionLog('page.view', currentPage);
@@ -3229,7 +3248,7 @@ const sendDailyReport = useCallback((dateParam) => {
   // === DASHBOARD ===
   if (currentPage === 'dashboard') {
     return (
-      <div className="min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4">
+      <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
         <header className="ui-header mb-6">
           <div className="flex items-center gap-3">
             <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
@@ -3310,14 +3329,15 @@ const sendDailyReport = useCallback((dateParam) => {
                 {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
               </Button>
               <Button
-                onClick={() => setLiteMode((prev) => !prev)}
+                onClick={() => setLiteMode((prev) => { const next = !prev; localStorage.setItem(LITE_MODE_OVERRIDE_KEY, next ? '1' : '0'); return next; })}
                 variant="ghost"
                 className={`gap-2 ${liteMode ? 'bg-amber-500/20 text-amber-200' : 'text-muted-foreground'}`}
-                title="Arayuz performans ayari"
+                title="Lite Mod: azaltilmis gorsel efekt, hizli islem odakli"
               >
                 <Zap size={16} />
                 {liteMode ? 'Lite Acik' : 'Lite Kapali'}
               </Button>
+              {!liteMode && (
               <Button
                 onClick={() => (enabledFeatureCount > 0 ? disableNewFeatures() : enableNewFeatures())}
                 variant="ghost"
@@ -3327,6 +3347,9 @@ const sendDailyReport = useCallback((dateParam) => {
                 <Layers size={16} />
                 {enabledFeatureCount > 0 ? 'Yeni Ozellikler Acik' : 'Yeni Ozellikler Kapali'}
               </Button>
+              )}
+              {!liteMode && (
+              <>
               <Button onClick={() => setShowReportModal(true)} variant="secondary" size="sm" className="gap-2">
                 <Calendar size={16} /> Tarih Seç
               </Button>
@@ -3336,9 +3359,12 @@ const sendDailyReport = useCallback((dateParam) => {
               <Button onClick={() => { const y = new Date(); y.setDate(y.getDate() - 1); sendDailyReport(y.toISOString().split('T')[0]); }} disabled={sendingReport} variant="secondary" size="sm" className="gap-2">
                 {sendingReport ? <RefreshCw size={16} className="animate-spin" /> : <Mail size={16} />} {sendingReport ? 'Gönderiliyor...' : 'Dünü Gönder'}
               </Button>
+              </>
+              )}
             </div>
           </div>
 
+          {!liteMode && (
           <div className="ui-panel mb-6">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
               <div className="text-sm text-zinc-300">
@@ -3355,8 +3381,9 @@ const sendDailyReport = useCallback((dateParam) => {
               Begenmezseniz tek tusla kapatabilirsiniz. Veriler korunur.
             </div>
           </div>
+          )}
 
-          {!showSyncPanel ? (
+          {!liteMode && (!showSyncPanel ? (
             <div className="mb-6">
               <Button onClick={() => setShowSyncPanel(true)} variant="secondary" className="gap-2">
                 <Zap size={16} className="text-yellow-400" /> Sync Durumu Göster
@@ -3548,9 +3575,9 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
               )}
             </div>
-          )}
+          ))}
 
-          {isElectron && (
+          {!liteMode && isElectron && (
             !showSmtpPanel ? (
               <div className="mb-6">
                 <Button onClick={() => setShowSmtpPanel(true)} variant="secondary" className="gap-2">
@@ -3713,7 +3740,7 @@ const sendDailyReport = useCallback((dateParam) => {
             )
           )}
 
-          {isElectron && (
+          {!liteMode && isElectron && (
             <div className="ui-card p-4 mb-6">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                 <h3 className="text-lg font-bold flex items-center gap-2"><FileText className="text-green-400" /> Yedekleme</h3>
@@ -3758,6 +3785,62 @@ const sendDailyReport = useCallback((dateParam) => {
             <div className="bg-gradient-to-br from-yellow-600/90 to-amber-800/80 p-5 rounded-xl shadow-lg border border-yellow-500/20"><div className="flex items-center justify-between"><div><p className="text-yellow-200 text-sm font-medium">Ort. Kalış Süresi</p><p className="text-2xl font-bold text-white mt-1">{Math.floor(stats.avgStayMins / 60)}s {stats.avgStayMins % 60}dk</p></div><Timer className="text-yellow-300" size={40} /></div></div>
           </div>
 
+          {liteMode ? (
+          /* ===== LITE MODE: sadece hızlı işlemler ve aktif durum ===== */
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="ui-card p-5">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Zap className="text-green-400" /> Hızlı İşlemler</h3>
+              <div className="space-y-4">
+                <div className="ui-panel-lg">
+                  <div className="flex justify-between items-center mb-3"><span className="text-zinc-400 text-sm">Şu an içeride</span><span className="text-2xl font-bold text-green-400">{activeLogs.length}</span></div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="bg-zinc-800 p-2 rounded flex justify-between"><span className="text-zinc-400">Araç</span><span className="font-bold">{activeVehicleCount}</span></div>
+                    <div className="bg-zinc-800 p-2 rounded flex justify-between"><span className="text-zinc-400">Ziyaretçi</span><span className="font-bold">{activeVisitorCount}</span></div>
+                  </div>
+                </div>
+                {longStayLogsList.length > 0 && (
+                  <div className="bg-red-900/30 border border-red-500/50 p-4 rounded-lg">
+                    <div className="flex items-center gap-2 mb-2"><AlertTriangle className="text-red-400" size={18} /><span className="text-red-300 font-bold">4+ Saat İçeride</span></div>
+                    <div className="space-y-1 max-h-[120px] overflow-y-auto">
+                      {longStayLogsList.map(log => (
+                        <div key={log.id} className="flex justify-between items-center text-sm bg-red-900/30 p-2 rounded">
+                          <span className="text-red-200">{log.plate || log.name}</span>
+                          <span className="text-red-400 font-mono">{Math.floor((new Date() - new Date(log.created_at)) / 3600000)}s {Math.floor(((new Date() - new Date(log.created_at)) % 3600000) / 60000)}dk</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="ui-panel-lg">
+                  <p className="text-zinc-400 text-sm mb-2">Son Çıkışlar</p>
+                  <div className="space-y-1 max-h-[100px] overflow-y-auto">
+                    {recentExitedLogs.map(log => (
+                      <div key={log.id} className="flex justify-between items-center text-sm text-zinc-300">
+                        <span>{log.plate || log.name}</span>
+                        <span className="text-zinc-500">{new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="ui-card p-5">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Clock className="text-blue-400" /> Bugün Detay</h3>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center p-3 bg-zinc-900 rounded"><span className="flex items-center gap-2"><Car className="text-blue-400" size={18} /> Araç Girişi</span><span className="font-bold text-xl">{stats.todayVehicle}</span></div>
+                <div className="flex justify-between items-center p-3 bg-zinc-900 rounded"><span className="flex items-center gap-2"><User className="text-purple-400" size={18} /> Ziyaretçi</span><span className="font-bold text-xl">{stats.todayVisitor}</span></div>
+              </div>
+              <h3 className="text-lg font-bold mt-6 mb-4 flex items-center gap-2"><Layers className="text-yellow-400" /> Vardiya</h3>
+              <div className="grid grid-cols-3 gap-3">
+                {['Vardiya 1 (08:00-16:00)', 'Vardiya 2 (16:00-00:00)', 'Vardiya 3 (00:00-08:00)'].map(shift => (
+                  <div key={shift} className={`p-3 rounded-xl text-center ${currentShift === shift ? 'bg-blue-600' : 'bg-zinc-900'}`}><p className="text-xs text-zinc-300">{shift.split(' ')[0]}</p><p className="text-xl font-bold mt-1">{stats.shiftStats[shift] || 0}</p></div>
+                ))}
+              </div>
+            </div>
+          </div>
+          ) : (
+          /* ===== FULL MODE: tüm dashboard detayları ===== */
+          <>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="ui-card p-5">
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Clock className="text-blue-400" /> Bugün Detay</h3>
@@ -3855,6 +3938,8 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
             </div>
           </div>
+          </>
+          )}
         </main>
 
         <Toast notification={notification} onClose={closeToast} />
@@ -3909,7 +3994,7 @@ const sendDailyReport = useCallback((dateParam) => {
     const progressPct = progressTotal > 0 ? Math.min(100, Math.round((progressDone / progressTotal) * 100)) : 0;
 
     return (
-      <div className="min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4">
+      <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
         <header className="ui-header mb-6">
           <div className="flex items-center gap-3">
             <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
@@ -4014,7 +4099,7 @@ const sendDailyReport = useCallback((dateParam) => {
   // === AUDIT ===
   if (currentPage === 'audit') {
     return (
-      <div className="min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4">
+      <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
         <header className="ui-header mb-6">
           <div className="flex items-center gap-3">
             <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
@@ -4112,7 +4197,7 @@ const sendDailyReport = useCallback((dateParam) => {
     const legacyHrEnabled = true;
     if (!legacyHrEnabled) {
       return (
-        <div className="min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4">
+        <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
           <header className="ui-header mb-6">
             <div className="flex items-center gap-3">
               <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
@@ -4151,7 +4236,7 @@ const sendDailyReport = useCallback((dateParam) => {
     }
 
     return (
-      <div className="min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4">
+      <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
         <header className="ui-header mb-6">
           <div className="flex items-center gap-3">
             <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
@@ -4779,7 +4864,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
   // === ANA SAYFA ===
   return (
-    <div className="min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4">
+    <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
       {!isOnline && (
         <div className="ui-alert ui-alert-danger mb-4">
           <div className="flex items-center gap-2 font-bold">

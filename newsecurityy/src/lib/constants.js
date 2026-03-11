@@ -17,6 +17,7 @@ export const SHOW_SYNC_PANEL_KEY = 'show_sync_panel';
 export const SHOW_SMTP_PANEL_KEY = 'show_smtp_panel';
 export const SHOW_HISTORY_PANEL_KEY = 'show_history_panel';
 export const LITE_MODE_KEY = 'ui_lite_mode';
+export const LITE_MODE_OVERRIDE_KEY = 'ui_lite_mode_manual';
 export const FEATURE_FLAGS_KEY = 'feature_flags_v2';
 export const ATTACHMENTS_SETTINGS_KEY = 'log_attachments_v1';
 export const SUPABASE_SYNC_QUEUE_KEY = 'supabase_sync_queue';

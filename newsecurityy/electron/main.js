@@ -120,7 +120,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js')
     },
     show: false,
-    backgroundColor: '#0f172a'
+    backgroundColor: '#08090e'
   });
 
   // Development veya Production URL
@@ -264,6 +264,8 @@ function initAutoUpdater() {
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowDowngrade = false;
+  autoUpdater.allowPrerelease = false;
 
   autoUpdater.on('checking-for-update', () => {
     sendUpdaterEvent('checking-for-update', {
