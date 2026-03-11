@@ -1,0 +1,77 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# production
+/build
+/dist
+
+# Update artifacts (electron-updater generic server)
+/updates/**
+!/updates/**/.gitkeep
+
+# Android build outputs
+/android/.gradle
+/android/build
+/android/app/build
+/android/capacitor-cordova-android-plugins/build
+
+# misc
+.DS_Store
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python / Django
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+*.egg-info/
+backend/.venv/
+backend/.env
+
+# Supabase temp
+/supabase/.temp
+
+# Dev / local databases
+backend/db.sqlite3
+
+# Logs & runtime output
+*.log
+*.err
+electron-runtime.*
+
+# Backups & temp files
+*.bak
+*.bak-*
+
+# Extracted / reverse-engineered artifacts
+_app3015_*
+_main3001.*
+_asar_extract/
+_asar_list.txt
+_tmp_main_from_asar.js
+_web_index_tmp.html
+
+# Temp data files
+yeni.csv*
+
+# Claude Code config
+.claude/
+
+# Old project folders
+/it-envanter-sistemi-main
+/sec
