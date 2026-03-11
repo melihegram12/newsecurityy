@@ -3089,8 +3089,8 @@ const sendDailyReport = useCallback((dateParam) => {
   if (!session) {
     return (
       <div className="min-h-screen app-shell app-container text-foreground font-sans p-4 flex items-center justify-center">
-        <Card className="w-full max-w-xl p-6">
-          <div className="flex items-center gap-3 mb-5">
+        <Card className="w-full max-w-xl p-6 md:p-8">
+          <div className="flex items-center gap-3 mb-6">
             <img src={logoImg} alt="Malhotra" className="h-10 w-auto object-contain" />
             <div>
               <h1 className="text-xl font-bold">Malhotra Güvenlik Paneli</h1>
@@ -3250,7 +3250,7 @@ const sendDailyReport = useCallback((dateParam) => {
               <div className="text-[10px] text-slate-500">Build: {BUILD_TIME}</div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 md:gap-3">
             <Button onClick={handleSystemReset} variant="secondary" className="gap-2" title="Takili kalirsa sistemi yeniler">
               <RefreshCw size={16} /> Yenile
             </Button>
@@ -3288,11 +3288,11 @@ const sendDailyReport = useCallback((dateParam) => {
               </>
             )}
             <Button onClick={handleRoleLogout} variant="destructive" className="gap-2">
-              <LogOut size={16} /> Cikis Yap
+              <LogOut size={16} /> Çıkış Yap
             </Button>
             {isElectron && (
               <Button onClick={handleAppExit} variant="destructive" className="gap-2">
-                <LogOut size={18} /> Uygulamayi Kapat
+                <LogOut size={18} /> Uygulamayı Kapat
               </Button>
             )}
           </div>

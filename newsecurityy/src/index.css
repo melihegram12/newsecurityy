@@ -309,7 +309,7 @@ body::after {
   }
 
   .ui-table thead {
-    @apply sticky top-0 bg-muted/40 backdrop-blur text-foreground;
+    @apply sticky top-0 bg-muted/70 backdrop-blur-md text-foreground;
   }
 
   .ui-table th {
@@ -394,6 +394,12 @@ body::after {
   .ui-table th,
   .ui-table td {
     padding: 0.5rem;
+  }
+
+  /* Larger touch targets for action buttons on mobile */
+  .ui-table td button {
+    min-width: 36px;
+    min-height: 36px;
   }
 }
 
