@@ -1,0 +1,3 @@
+component,External SELECT /rest/v1/security_logs,IPC invoke app:quit,IPC invoke backup:getStatus,IPC invoke backup:openFolder,IPC invoke backup:runNow,IPC invoke db:deleteLog,IPC invoke db:exitLog,IPC invoke db:getActiveLogs,IPC invoke db:getAllLogs,IPC invoke db:getLogsByDateRange,IPC invoke db:getSetting,IPC invoke db:getStats,IPC invoke db:insertLog,IPC invoke db:searchLogs,IPC invoke db:setSetting,IPC invoke db:updateLog,IPC invoke db:upsertLogByCreatedAt,IPC invoke email:getSettings,IPC invoke email:saveSettings,IPC invoke email:sendDailyReport,IPC invoke email:testSmtp,REST POST /api/logs/sync
+src/App.jsx,15,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,2,1,1,1,0
+src/dbClient.js,5,0,0,0,0,1,1,2,1,1,1,1,1,1,1,1,2,0,0,0,0,1

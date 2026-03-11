@@ -1,0 +1,85 @@
+graph TD
+f_src_App_jsx["src/App.jsx"]
+f_src_dbClient_js["src/dbClient.js"]
+ep_external_POST_https___api_resend_com_emails(["EXTERNAL\nPOST https://api.resend.com/emails"])
+ep_external_SELECT__rest_v1_security_logs(["EXTERNAL\nSELECT /rest/v1/security_logs"])
+ep_external_fetch_https___api_resend_com_emails(["EXTERNAL\nfetch https://api.resend.com/emails"])
+ep_external_sendMail_smtp___(["EXTERNAL\nsendMail smtp://"])
+ep_ipc_invoke_app_getVersion(["IPC\ninvoke app:getVersion"])
+ep_ipc_invoke_app_quit(["IPC\ninvoke app:quit"])
+ep_ipc_invoke_backup_getStatus(["IPC\ninvoke backup:getStatus"])
+ep_ipc_invoke_backup_openFolder(["IPC\ninvoke backup:openFolder"])
+ep_ipc_invoke_backup_runNow(["IPC\ninvoke backup:runNow"])
+ep_ipc_invoke_backup_setSettings(["IPC\ninvoke backup:setSettings"])
+ep_ipc_invoke_db_deleteLog(["IPC\ninvoke db:deleteLog"])
+ep_ipc_invoke_db_exitLog(["IPC\ninvoke db:exitLog"])
+ep_ipc_invoke_db_getActiveLogs(["IPC\ninvoke db:getActiveLogs"])
+ep_ipc_invoke_db_getAllLogs(["IPC\ninvoke db:getAllLogs"])
+ep_ipc_invoke_db_getDbPath(["IPC\ninvoke db:getDbPath"])
+ep_ipc_invoke_db_getLogsByDateRange(["IPC\ninvoke db:getLogsByDateRange"])
+ep_ipc_invoke_db_getSetting(["IPC\ninvoke db:getSetting"])
+ep_ipc_invoke_db_getStats(["IPC\ninvoke db:getStats"])
+ep_ipc_invoke_db_insertLog(["IPC\ninvoke db:insertLog"])
+ep_ipc_invoke_db_searchLogs(["IPC\ninvoke db:searchLogs"])
+ep_ipc_invoke_db_setSetting(["IPC\ninvoke db:setSetting"])
+ep_ipc_invoke_db_updateLog(["IPC\ninvoke db:updateLog"])
+ep_ipc_invoke_db_upsertLogByCreatedAt(["IPC\ninvoke db:upsertLogByCreatedAt"])
+ep_ipc_invoke_email_getSettings(["IPC\ninvoke email:getSettings"])
+ep_ipc_invoke_email_saveSettings(["IPC\ninvoke email:saveSettings"])
+ep_ipc_invoke_email_sendDailyReport(["IPC\ninvoke email:sendDailyReport"])
+ep_ipc_invoke_email_sendTestEmail(["IPC\ninvoke email:sendTestEmail"])
+ep_ipc_invoke_email_testSmtp(["IPC\ninvoke email:testSmtp"])
+ep_ipc_invoke_file_openFolder(["IPC\ninvoke file:openFolder"])
+ep_ipc_invoke_file_saveFile(["IPC\ninvoke file:saveFile"])
+ep_ipc_invoke_scheduler_getStatus(["IPC\ninvoke scheduler:getStatus"])
+ep_ipc_invoke_scheduler_restart(["IPC\ninvoke scheduler:restart"])
+ep_ipc_invoke_scheduler_start(["IPC\ninvoke scheduler:start"])
+ep_ipc_invoke_scheduler_stop(["IPC\ninvoke scheduler:stop"])
+ep_rest_ANY__Netlify_handler____netlify_functions_send_report(["REST\nANY (Netlify handler) /.netlify/functions/send-report"])
+ep_rest_ANY__functions_v1_send_daily_report(["REST\nANY /functions/v1/send-daily-report"])
+ep_rest_GET__admin_(["REST\nGET /admin/"])
+ep_rest_GET__api_attendance_summary(["REST\nGET /api/attendance/summary"])
+ep_rest_GET__api_payroll_summary(["REST\nGET /api/payroll/summary"])
+ep_rest_GET__api_sgk_report(["REST\nGET /api/sgk/report"])
+ep_rest_POST__api_absence_records__uuid_pk__approve_hr(["REST\nPOST /api/absence/records/<uuid:pk>/approve/hr"])
+ep_rest_POST__api_absence_records__uuid_pk__approve_manager(["REST\nPOST /api/absence/records/<uuid:pk>/approve/manager"])
+ep_rest_POST__api_absence_records__uuid_pk__cancel(["REST\nPOST /api/absence/records/<uuid:pk>/cancel"])
+ep_rest_POST__api_absence_records__uuid_pk__reject(["REST\nPOST /api/absence/records/<uuid:pk>/reject"])
+ep_rest_POST__api_auth_token_(["REST\nPOST /api/auth/token/"])
+ep_rest_POST__api_auth_token_refresh_(["REST\nPOST /api/auth/token/refresh/"])
+ep_rest_POST__api_check(["REST\nPOST /api/check"])
+ep_rest_POST__api_device_auth(["REST\nPOST /api/device/auth"])
+ep_rest_POST__api_logs_sync(["REST\nPOST /api/logs/sync"])
+ep_rest___api_absence_records(["REST\n /api/absence/records"])
+ep_rest___api_absence_records__uuid_pk_(["REST\n /api/absence/records/<uuid:pk>"])
+ep_rest___api_absence_types(["REST\n /api/absence/types"])
+ep_rest___api_absence_types__uuid_pk_(["REST\n /api/absence/types/<uuid:pk>"])
+ep_rest___api_payroll_profiles(["REST\n /api/payroll/profiles"])
+ep_rest___api_payroll_profiles__uuid_pk_(["REST\n /api/payroll/profiles/<uuid:pk>"])
+ep_rest___api_shift_assignments(["REST\n /api/shift-assignments"])
+ep_rest___api_shift_assignments__uuid_pk_(["REST\n /api/shift-assignments/<uuid:pk>"])
+ep_rest___api_shifts(["REST\n /api/shifts"])
+ep_rest___api_shifts__uuid_pk_(["REST\n /api/shifts/<uuid:pk>"])
+f_src_dbClient_js --> ep_rest_POST__api_logs_sync
+f_src_dbClient_js --> ep_ipc_invoke_db_getActiveLogs
+f_src_dbClient_js --> ep_ipc_invoke_db_getAllLogs
+f_src_dbClient_js --> ep_ipc_invoke_db_getLogsByDateRange
+f_src_dbClient_js --> ep_ipc_invoke_db_insertLog
+f_src_dbClient_js --> ep_ipc_invoke_db_updateLog
+f_src_dbClient_js --> ep_ipc_invoke_db_exitLog
+f_src_dbClient_js --> ep_ipc_invoke_db_deleteLog
+f_src_dbClient_js --> ep_ipc_invoke_db_upsertLogByCreatedAt
+f_src_dbClient_js --> ep_ipc_invoke_db_searchLogs
+f_src_dbClient_js --> ep_ipc_invoke_db_getStats
+f_src_dbClient_js --> ep_ipc_invoke_db_setSetting
+f_src_dbClient_js --> ep_ipc_invoke_db_getSetting
+f_src_App_jsx --> ep_ipc_invoke_app_quit
+f_src_App_jsx --> ep_ipc_invoke_email_getSettings
+f_src_App_jsx --> ep_ipc_invoke_email_saveSettings
+f_src_App_jsx --> ep_ipc_invoke_email_testSmtp
+f_src_App_jsx --> ep_ipc_invoke_email_sendDailyReport
+f_src_App_jsx --> ep_ipc_invoke_backup_getStatus
+f_src_App_jsx --> ep_ipc_invoke_backup_runNow
+f_src_App_jsx --> ep_ipc_invoke_backup_openFolder
+f_src_App_jsx --> ep_external_SELECT__rest_v1_security_logs
+f_src_dbClient_js --> ep_external_SELECT__rest_v1_security_logs
