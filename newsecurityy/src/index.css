@@ -1,0 +1,418 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Shadcn-like zinc dark tokens */
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 6%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 4%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 5.9% 10%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 18%;
+  --input: 240 3.7% 18%;
+  --ring: 240 4.9% 83.9%;
+  --radius: 1rem;
+
+  --app-bg: #070b16;
+  --app-bg-2: #0b1220;
+  --app-fg: hsl(var(--foreground));
+  --app-muted: rgba(226, 232, 240, 0.72);
+
+  /* Accents */
+  --a-violet: rgba(124, 58, 237, 0.55);
+  --a-cyan: rgba(6, 182, 212, 0.45);
+  --a-emerald: rgba(34, 197, 94, 0.35);
+  --a-amber: rgba(245, 158, 11, 0.30);
+}
+
+body {
+  font-family: "Space Grotesk", system-ui, -apple-system, Segoe UI, sans-serif;
+  background:
+    radial-gradient(900px 650px at 10% 10%, var(--a-violet) 0%, transparent 55%),
+    radial-gradient(900px 650px at 90% 15%, var(--a-cyan) 0%, transparent 55%),
+    radial-gradient(1100px 750px at 70% 90%, var(--a-emerald) 0%, transparent 58%),
+    radial-gradient(900px 600px at 25% 85%, var(--a-amber) 0%, transparent 60%),
+    linear-gradient(180deg, var(--app-bg-2), var(--app-bg));
+  color: var(--app-fg);
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  h1 {
+    @apply text-3xl md:text-4xl font-semibold tracking-tight;
+  }
+  h2 {
+    @apply text-2xl md:text-3xl font-semibold tracking-tight;
+  }
+  h3 {
+    @apply text-xl font-semibold;
+  }
+  p {
+    @apply text-sm md:text-base text-foreground/90;
+  }
+}
+
+/* Flowing aurora layer (subtle) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -25%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    conic-gradient(
+      from 180deg at 50% 50%,
+      rgba(124, 58, 237, 0.0),
+      rgba(124, 58, 237, 0.22),
+      rgba(6, 182, 212, 0.18),
+      rgba(34, 197, 94, 0.16),
+      rgba(245, 158, 11, 0.12),
+      rgba(124, 58, 237, 0.0)
+    );
+  filter: blur(90px);
+  opacity: 0.9;
+  transform: translate3d(0, 0, 0);
+  animation: aurora-spin 26s linear infinite;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(800px 500px at 50% 35%, rgba(255, 255, 255, 0.06), transparent 60%),
+    radial-gradient(900px 650px at 50% 120%, rgba(255, 255, 255, 0.05), transparent 55%);
+  opacity: 0.65;
+}
+
+@keyframes aurora-spin {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+  to {
+    transform: rotate(360deg) scale(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none;
+  }
+}
+
+/* App shell overrides to make surfaces more "alive" without rewriting Tailwind classes */
+.app-shell {
+  position: relative;
+  isolation: isolate;
+}
+
+.app-shell .bg-slate-900 {
+  background-color: hsl(var(--background) / 0.55) !important;
+}
+
+.app-shell .bg-slate-800 {
+  background-color: hsl(var(--card) / 0.72) !important;
+  backdrop-filter: blur(10px);
+}
+
+.app-shell .bg-slate-700 {
+  background-color: hsl(var(--secondary) / 0.65) !important;
+  backdrop-filter: blur(8px);
+}
+
+.app-shell .border-slate-700,
+.app-shell .border-slate-600 {
+  border-color: hsl(var(--border) / 0.6) !important;
+}
+
+.app-shell .shadow-lg {
+  box-shadow:
+    0 18px 45px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset !important;
+}
+
+.app-shell .shadow-2xl {
+  box-shadow:
+    0 26px 75px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.035) inset !important;
+}
+
+@layer components {
+  .app-container {
+    @apply max-w-[1400px] mx-auto;
+  }
+
+  /* Consistent radii across existing rounded utilities */
+  .app-shell .rounded-xl {
+    border-radius: calc(var(--radius) + 8px) !important;
+  }
+
+  .app-shell .rounded-lg {
+    border-radius: var(--radius) !important;
+  }
+
+  .app-shell .rounded,
+  .app-shell .rounded-md {
+    border-radius: var(--radius) !important;
+  }
+
+  .ui-card {
+    @apply rounded-2xl border border-border bg-card/70 shadow-card backdrop-blur;
+  }
+
+  .ui-header {
+    @apply ui-card px-5 py-4 shadow-lg flex flex-col md:flex-row items-center justify-between gap-4;
+  }
+
+  .ui-panel {
+    @apply rounded-2xl border border-border bg-card/50 p-3 backdrop-blur;
+  }
+
+  .ui-panel-lg {
+    @apply rounded-2xl border border-border bg-card/60 p-4 backdrop-blur;
+  }
+
+  .ui-chip {
+    @apply inline-flex items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-xs text-muted-foreground;
+  }
+
+  .ui-pill {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold bg-secondary/60 text-secondary-foreground;
+  }
+
+  .ui-alert {
+    @apply ui-card px-4 py-3 flex items-center justify-between gap-3;
+  }
+
+  .ui-alert-danger {
+    @apply border-destructive/40 bg-destructive/10 text-red-200;
+  }
+
+  .ui-alert-warning {
+    @apply border-amber-500/40 bg-amber-500/10 text-amber-200;
+  }
+
+  .ui-alert-info {
+    @apply border-blue-500/40 bg-blue-500/10 text-blue-200;
+  }
+
+  .ui-segment {
+    @apply flex bg-muted/40 p-1 rounded-2xl border border-border;
+  }
+
+  .ui-segment-btn {
+    @apply flex-1 py-2 text-sm font-semibold rounded-xl transition-colors;
+  }
+
+  .ui-segment-active {
+    @apply bg-primary text-primary-foreground shadow-soft;
+  }
+
+  .ui-segment-success {
+    @apply bg-emerald-500/20 text-emerald-200 border border-emerald-500/40;
+  }
+
+  .ui-segment-danger {
+    @apply bg-red-500/20 text-red-200 border border-red-500/40;
+  }
+
+  .ui-segment-inactive {
+    @apply text-muted-foreground hover:bg-muted/60;
+  }
+
+  .ui-subtab {
+    @apply flex flex-col items-center justify-center p-3 rounded-2xl border border-transparent transition-all;
+  }
+
+  .ui-subtab-active {
+    @apply bg-accent/60 border-border text-foreground shadow-soft;
+  }
+
+  .ui-subtab-inactive {
+    @apply text-muted-foreground hover:bg-muted/40;
+  }
+
+  .ui-kpi {
+    @apply rounded-2xl border border-border bg-card/60 p-4;
+  }
+
+  .ui-checkbox {
+    @apply h-4 w-4 rounded border-border bg-background text-primary focus:ring-2 focus:ring-ring/40;
+  }
+
+  .ui-input {
+    @apply w-full rounded-2xl border border-input bg-background/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40;
+  }
+
+  .ui-label {
+    @apply text-xs font-medium text-muted-foreground mb-1 inline-block;
+  }
+
+  .ui-helper {
+    @apply text-[11px] text-muted-foreground mt-1;
+  }
+
+  .ui-error {
+    @apply text-[11px] text-destructive mt-1;
+  }
+
+  .ui-btn {
+    @apply inline-flex items-center justify-center rounded-2xl text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60 disabled:pointer-events-none;
+  }
+
+  .ui-btn-primary {
+    @apply ui-btn bg-primary text-primary-foreground hover:bg-primary/90 shadow-soft;
+  }
+
+  .ui-btn-secondary {
+    @apply ui-btn bg-secondary text-secondary-foreground hover:bg-secondary/80;
+  }
+
+  .ui-btn-ghost {
+    @apply ui-btn bg-transparent text-foreground hover:bg-accent/40;
+  }
+
+  .ui-btn-destructive {
+    @apply ui-btn bg-destructive text-destructive-foreground hover:bg-destructive/90;
+  }
+
+  .ui-table-wrap {
+    @apply overflow-auto rounded-2xl border border-border bg-card/40;
+  }
+
+  .ui-table {
+    @apply w-full text-left text-sm text-muted-foreground;
+  }
+
+  .ui-table thead {
+    @apply sticky top-0 bg-muted/40 backdrop-blur text-foreground;
+  }
+
+  .ui-table th {
+    @apply px-3 py-3 font-medium;
+  }
+
+  .ui-table td {
+    @apply px-3 py-3;
+  }
+
+  .ui-th-btn {
+    @apply inline-flex items-center gap-2 text-sm font-semibold text-foreground hover:text-foreground/80;
+  }
+
+  .ui-empty {
+    @apply py-12 px-6 text-center text-muted-foreground;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    background-attachment: scroll;
+  }
+
+  /* Mobile WebView: heavy backdrop/filter effects can make text look soft. */
+  body::before {
+    content: none;
+  }
+
+  .backdrop-blur,
+  .backdrop-blur-sm,
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl,
+  .backdrop-blur-2xl,
+  .backdrop-blur-3xl {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .app-shell .bg-slate-800,
+  .app-shell .bg-slate-700 {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .app-container {
+    max-width: 100%;
+  }
+
+  .ui-header {
+    padding: 0.75rem 1rem !important;
+  }
+
+  .ui-card {
+    padding: 1rem !important;
+  }
+
+  .ui-panel,
+  .ui-panel-lg {
+    padding: 0.75rem !important;
+  }
+
+  .ui-input {
+    min-height: 44px;
+    font-size: 0.95rem;
+  }
+
+  .ui-btn {
+    min-height: 44px;
+    padding: 0.625rem 0.75rem;
+  }
+
+  .ui-subtab {
+    padding: 0.5rem !important;
+  }
+
+  .ui-table {
+    font-size: 0.75rem;
+  }
+
+  .ui-table th,
+  .ui-table td {
+    padding: 0.5rem;
+  }
+}
+
+/* Scrollbar */
+* {
+  scrollbar-color: rgba(148, 163, 184, 0.35) rgba(2, 6, 23, 0.4);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(6, 182, 212, 0.35), rgba(124, 58, 237, 0.35));
+  border-radius: 999px;
+  border: 2px solid rgba(2, 6, 23, 0.55);
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(2, 6, 23, 0.35);
+}
