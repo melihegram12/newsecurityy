@@ -25,7 +25,7 @@ const ConfirmModal = memo(function ConfirmModal({
           <AlertTriangle className={type === 'danger' ? 'text-red-500' : 'text-orange-500'} />
           {title}
         </h3>
-        <p className="text-slate-300 text-sm mb-6 whitespace-pre-line">{message}</p>
+        <p className="text-zinc-300 text-sm mb-6 whitespace-pre-line">{message}</p>
         <div className="flex flex-col sm:flex-row gap-3">
           <Button onClick={onCancel} variant="secondary" className="flex-1">{cancelLabel}</Button>
           {typeof onSecondary === 'function' && secondaryLabel ? (

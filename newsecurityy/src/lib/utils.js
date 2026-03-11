@@ -160,7 +160,7 @@ export const getCategoryStyle = (cat) => {
   if (cat?.includes('Misafir')) return 'border-emerald-500 text-emerald-400 bg-emerald-500/10';
   if (cat?.includes('Fabrika')) return 'border-orange-500 text-orange-400 bg-orange-500/10';
   if (cat?.includes('İşten')) return 'border-rose-500 text-rose-400 bg-rose-500/10';
-  return 'border-slate-600 text-slate-400';
+  return 'border-zinc-600 text-zinc-400';
 };
 
 export const getShortCategory = (cat) => {

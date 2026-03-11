@@ -17,11 +17,11 @@ export class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-900 p-6">
-          <div className="bg-slate-800 border border-red-500/30 rounded-xl p-8 max-w-md w-full text-center">
+        <div className="min-h-screen flex items-center justify-center bg-zinc-900 p-6">
+          <div className="bg-zinc-800 border border-red-500/30 rounded-xl p-8 max-w-md w-full text-center">
             <div className="text-4xl mb-4">⚠️</div>
             <h2 className="text-xl font-bold text-white mb-2">Beklenmeyen Hata</h2>
-            <p className="text-slate-400 text-sm mb-6">
+            <p className="text-zinc-400 text-sm mb-6">
               Uygulama beklenmeyen bir hatayla karşılaştı. Lütfen sayfayı yenileyin.
             </p>
             <button

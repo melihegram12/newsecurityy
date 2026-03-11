@@ -38,12 +38,12 @@ const Modal = memo(function Modal({
       aria-modal="true"
       onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}
     >
-      <div className={cx('bg-slate-800 border border-slate-700 rounded-xl w-full shadow-2xl animate-in fade-in zoom-in', sizeClass, className)}>
+      <div className={cx('bg-zinc-800 border border-zinc-700 rounded-xl w-full shadow-2xl animate-in fade-in zoom-in', sizeClass, className)}>
         {(title || showClose) && (
-          <div className="flex items-center justify-between p-4 border-b border-slate-700">
+          <div className="flex items-center justify-between p-4 border-b border-zinc-700">
             {title && <h3 className="text-lg font-bold text-white">{title}</h3>}
             {showClose && onClose && (
-              <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-1 rounded hover:bg-slate-700">
+              <button onClick={onClose} className="text-zinc-400 hover:text-white transition-colors p-1 rounded hover:bg-zinc-700">
                 <X size={18} />
               </button>
             )}

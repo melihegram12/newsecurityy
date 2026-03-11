@@ -18,7 +18,7 @@ const Dropdown = memo(function Dropdown({ isOpen, items, onSelect, renderItem, e
           </div>
         ))
       ) : (
-        <div className="p-3 text-slate-500 text-xs italic text-center">{emptyText}</div>
+        <div className="p-3 text-zinc-500 text-xs italic text-center">{emptyText}</div>
       )}
     </div>
   );

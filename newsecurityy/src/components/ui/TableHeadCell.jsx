@@ -12,7 +12,7 @@ const TableHeadCell = ({ icon, label, sortKey, sortState, onSort, align = "left"
           {icon}
           {label}
           {sortState?.key === sortKey && (
-            <span className="ml-1 text-slate-400">{sortState?.dir === 'asc' ? '\u25B2' : '\u25BC'}</span>
+            <span className="ml-1 text-zinc-400">{sortState?.dir === 'asc' ? '\u25B2' : '\u25BC'}</span>
           )}
         </button>
       ) : (

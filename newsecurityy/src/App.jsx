@@ -3078,7 +3078,7 @@ const sendDailyReport = useCallback((dateParam) => {
     if (status === 'error') return { label: 'HATA', className: 'bg-red-500/20 text-red-400' };
     if (status === 'queued') return { label: 'KUYRUK', className: 'bg-orange-500/20 text-orange-300' };
     if (status === 'attempt') return { label: 'DENIYOR', className: 'bg-blue-500/20 text-blue-300' };
-    return { label: '-', className: 'bg-slate-700 text-slate-300' };
+    return { label: '-', className: 'bg-zinc-700 text-zinc-300' };
   };
   const pushBadge = getStatusBadge(pushStatus);
   const pullBadge = getStatusBadge(pullStatus);
@@ -3089,12 +3089,12 @@ const sendDailyReport = useCallback((dateParam) => {
   if (!session) {
     return (
       <div className="min-h-screen app-shell app-container text-foreground font-sans p-4 flex items-center justify-center">
-        <Card className="w-full max-w-xl p-6 md:p-8">
+        <Card className="w-full max-w-xl p-6 md:p-8" style={{ borderTop: '2px solid rgba(245,158,11,0.35)' }}>
           <div className="flex items-center gap-3 mb-6">
             <img src={logoImg} alt="Malhotra" className="h-10 w-auto object-contain" />
             <div>
               <h1 className="text-xl font-bold">Malhotra Güvenlik Paneli</h1>
-              <div className="text-xs text-slate-400">Rol Bazlı Giriş</div>
+              <div className="text-xs text-amber-400/70">Rol Bazlı Giriş</div>
             </div>
           </div>
 
@@ -3135,7 +3135,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <FormField
                     label="Yerel API URL"
                     htmlFor="login-local-api-url"
-                    helper={<span>Örnek: <span className="font-mono text-slate-300">http://10.166.1.23:18267/api</span></span>}
+                    helper={<span>Örnek: <span className="font-mono text-zinc-300">http://10.166.1.23:18267/api</span></span>}
                     error={localApiUrlError}
                   >
                     <input
@@ -3146,7 +3146,7 @@ const sendDailyReport = useCallback((dateParam) => {
                       className="ui-input"
                     />
                   </FormField>
-                  <div className="text-[10px] text-slate-500 mt-2 break-all">
+                  <div className="text-[10px] text-zinc-500 mt-2 break-all">
                     Aktif: {effectiveLocalApiUrl || '-'}
                   </div>
                 </Card>
@@ -3154,7 +3154,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <FormField
                     label="API Key (Opsiyonel)"
                     htmlFor="login-local-api-key"
-                    helper={<span>Header: <span className="font-mono text-slate-300">X-Api-Key</span></span>}
+                    helper={<span>Header: <span className="font-mono text-zinc-300">X-Api-Key</span></span>}
                   >
                     <input
                       type="password"
@@ -3173,7 +3173,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <FormField
                     label="Güncelleme URL (Desktop)"
                     htmlFor="desktop-update-url"
-                    helper={<span>Örnek: <span className="font-mono text-slate-300">http://10.166.1.23:3001/updates/desktop/</span></span>}
+                    helper={<span>Örnek: <span className="font-mono text-zinc-300">http://10.166.1.23:3001/updates/desktop/</span></span>}
                     error={updateUrlError}
                   >
                     <input
@@ -3184,7 +3184,7 @@ const sendDailyReport = useCallback((dateParam) => {
                       className="ui-input"
                     />
                   </FormField>
-                  <div className="text-[10px] text-slate-500 mt-2 break-all">
+                  <div className="text-[10px] text-zinc-500 mt-2 break-all">
                     Aktif: {effectiveUpdateUrl || '(varsayılan)'}
                   </div>
                   <div className="mt-2">
@@ -3235,19 +3235,19 @@ const sendDailyReport = useCallback((dateParam) => {
             <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
             <div>
               <h1 className="text-xl font-bold">Malhotra Güvenlik Paneli</h1>
-              <div className="flex items-center gap-2 text-xs text-slate-400">
+              <div className="flex items-center gap-2 text-xs text-zinc-400">
                 {isOnline ? <span className="text-green-400 flex items-center gap-1"><Wifi size={12} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={12} /> Offline</span>}
                 <span>| {session?.user?.email || 'local'}</span>
                 {totalQueueCount > 0 && (
                   <span className="ui-pill">Kuyruk: {totalQueueCount}</span>
                 )}
               </div>
-              <div className="text-[10px] text-slate-500 mt-1 break-all">
+              <div className="text-[10px] text-zinc-500 mt-1 break-all">
                 Supabase: {supabaseUrl}
                 {supabaseDebug.lastError ? ` | Error: ${supabaseDebug.lastError}` : ''}
                 {supabaseDebug.lastCheckedAt ? ` | Check: ${new Date(supabaseDebug.lastCheckedAt).toLocaleTimeString('tr-TR')}` : ''}
               </div>
-              <div className="text-[10px] text-slate-500">Build: {BUILD_TIME}</div>
+              <div className="text-[10px] text-zinc-500">Build: {BUILD_TIME}</div>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 md:gap-3">
@@ -3341,7 +3341,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
           <div className="ui-panel mb-6">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-              <div className="text-sm text-slate-300">
+              <div className="text-sm text-zinc-300">
                 Ekstra Ozellikler: {enabledFeatureCount}/4 aktif
               </div>
               <div className="flex flex-wrap gap-2">
@@ -3351,7 +3351,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 <Button size="sm" variant={enhancedAuditEnabled ? 'primary' : 'secondary'} onClick={() => toggleFeatureFlag('enhancedAudit')}>Audit+</Button>
               </div>
             </div>
-            <div className="text-[11px] text-slate-500 mt-2">
+            <div className="text-[11px] text-zinc-500 mt-2">
               Begenmezseniz tek tusla kapatabilirsiniz. Veriler korunur.
             </div>
           </div>
@@ -3377,34 +3377,34 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Kuyruk</div>
+                  <div className="text-xs text-zinc-400">Kuyruk</div>
                   <div className="text-xl font-bold">{syncQueueCount}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <div className="flex items-center gap-2 text-xs text-zinc-400">
                     <span>Push</span>
                     <span className={`px-2 py-0.5 rounded ${pushBadge.className}`}>{pushBadge.label}</span>
                   </div>
                   <div className="text-sm mt-1">{formatSyncTime(syncStatus?.lastPushAt)}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <div className="flex items-center gap-2 text-xs text-zinc-400">
                     <span>Pull</span>
                     <span className={`px-2 py-0.5 rounded ${pullBadge.className}`}>{pullBadge.label}</span>
                   </div>
                   <div className="text-sm mt-1">{formatSyncTime(syncStatus?.lastPullAt)}</div>
-                  {syncStatus?.lastPullCount != null && (<div className="text-[10px] text-slate-500">Çekilen: {syncStatus.lastPullCount}</div>)}
+                  {syncStatus?.lastPullCount != null && (<div className="text-[10px] text-zinc-500">Çekilen: {syncStatus.lastPullCount}</div>)}
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Son Hata</div>
+                  <div className="text-xs text-zinc-400">Son Hata</div>
                   <div className="text-[11px] text-red-300 break-words">{syncStatus?.lastPushError || syncStatus?.lastPullError || '-'}</div>
                 </div>
               </div>
 
               {offlineQueueInspectorEnabled && (
-                <div className="mt-4 border-t border-slate-700 pt-4">
+                <div className="mt-4 border-t border-zinc-700 pt-4">
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-2">
-                    <div className="text-sm text-slate-300">Offline Kuyruk Denetimi</div>
+                    <div className="text-sm text-zinc-300">Offline Kuyruk Denetimi</div>
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="secondary" onClick={() => clearQueuedItems('offline')}>Offline Temizle</Button>
                       <Button size="sm" variant="secondary" onClick={() => clearQueuedItems('supabase')}>Supabase Temizle</Button>
@@ -3435,7 +3435,7 @@ const sendDailyReport = useCallback((dateParam) => {
                         ))}
                         {queueInspectorRows.length === 0 && (
                           <tr>
-                            <td colSpan={5} className="p-3 text-xs text-slate-500">Kuyrukta bekleyen kayit yok.</td>
+                            <td colSpan={5} className="p-3 text-xs text-zinc-500">Kuyrukta bekleyen kayit yok.</td>
                           </tr>
                         )}
                       </tbody>
@@ -3445,20 +3445,20 @@ const sendDailyReport = useCallback((dateParam) => {
               )}
 
               {isElectron && (
-                <div className="mt-4 border-t border-slate-700 pt-4">
-                  <div className="text-sm text-slate-400 mb-2">Lokal -> Supabase</div>
+                <div className="mt-4 border-t border-zinc-700 pt-4">
+                  <div className="text-sm text-zinc-400 mb-2">Lokal -> Supabase</div>
                   <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
                     <Button onClick={handleExportLocalToSupabase} variant="secondary" className="gap-2" disabled={bulkExportState.running}>
                       {bulkExportState.running ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
                       {bulkExportState.running ? 'Aktariliyor...' : 'Lokal Verileri Supabase\'e Aktar'}
                     </Button>
-                    <div className="text-xs text-slate-400">
+                    <div className="text-xs text-zinc-400">
                       {bulkExportTotal > 0 ? `${bulkExportProcessed}/${bulkExportTotal} (${bulkExportPct}%)` : 'Hazir'}
                       {bulkExportState.lastError ? ` | Hata: ${bulkExportState.lastError}` : ''}
                     </div>
                   </div>
                   {bulkExportState.running && (
-                    <div className="mt-2 h-2 w-full bg-slate-800 rounded">
+                    <div className="mt-2 h-2 w-full bg-zinc-800 rounded">
                       <div className="h-2 bg-blue-500 rounded" style={{ width: `${bulkExportPct}%` }} />
                     </div>
                   )}
@@ -3466,22 +3466,22 @@ const sendDailyReport = useCallback((dateParam) => {
               )}
 
               {LOCAL_SYNC_ENABLED && (
-                <div className="mt-4 border-t border-slate-700 pt-4">
-                  <div className="text-sm text-slate-400 mb-2">Yerel Sunucu Sync</div>
+                <div className="mt-4 border-t border-zinc-700 pt-4">
+                  <div className="text-sm text-zinc-400 mb-2">Yerel Sunucu Sync</div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400">Yerel Kuyruk</div>
+                    <div className="text-xs text-zinc-400">Yerel Kuyruk</div>
                     <div className="text-xl font-bold">{localQueueCount}</div>
                   </div>
                   <div className="ui-panel">
-                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <div className="flex items-center gap-2 text-xs text-zinc-400">
                       <span>Yerel Push</span>
                       <span className={`px-2 py-0.5 rounded ${localPushBadge.className}`}>{localPushBadge.label}</span>
                     </div>
                     <div className="text-sm mt-1">{formatSyncTime(localStatus?.lastPushAt)}</div>
                   </div>
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400">Yerel Son Hata</div>
+                    <div className="text-xs text-zinc-400">Yerel Son Hata</div>
                     <div className="text-[11px] text-red-300 break-words">{localStatus?.lastPushError || '-'}</div>
                   </div>
                 </div>
@@ -3491,7 +3491,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     <FormField
                       label="Yerel API URL"
                       htmlFor="local-api-url"
-                      helper={<span>Örnek: <span className="font-mono text-slate-300">http://localhost:8000/api</span> (sonunda <span className="font-mono text-slate-300">/api</span> olmalı)</span>}
+                      helper={<span>Örnek: <span className="font-mono text-zinc-300">http://localhost:8000/api</span> (sonunda <span className="font-mono text-zinc-300">/api</span> olmalı)</span>}
                       error={localApiUrlError}
                     >
                       <input
@@ -3502,7 +3502,7 @@ const sendDailyReport = useCallback((dateParam) => {
                         className="ui-input"
                       />
                     </FormField>
-                    <div className="text-[10px] text-slate-500 mt-2 break-all">
+                    <div className="text-[10px] text-zinc-500 mt-2 break-all">
                       Aktif: {effectiveLocalApiUrl || '-'}
                     </div>
                   </Card>
@@ -3510,7 +3510,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     <FormField
                       label="API Key (Opsiyonel)"
                       htmlFor="local-api-key"
-                      helper={<span>Gonderilen header: <span className="font-mono text-slate-300">X-Api-Key</span>. Backend'de zorunluysa burada doldurun.</span>}
+                      helper={<span>Gonderilen header: <span className="font-mono text-zinc-300">X-Api-Key</span>. Backend'de zorunluysa burada doldurun.</span>}
                     >
                       <input
                         type="password"
@@ -3524,7 +3524,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     <FormField
                       label="JWT Token (Opsiyonel)"
                       htmlFor="local-api-token"
-                      helper={<span>Gonderilen header: <span className="font-mono text-slate-300">Authorization: Bearer &lt;token&gt;</span></span>}
+                      helper={<span>Gonderilen header: <span className="font-mono text-zinc-300">Authorization: Bearer &lt;token&gt;</span></span>}
                     >
                       <input
                         type="password"
@@ -3579,7 +3579,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400 mb-2">SMTP Host</div>
+                    <div className="text-xs text-zinc-400 mb-2">SMTP Host</div>
                     <input
                       value={smtpForm.host || ''}
                       onChange={(e) => setSmtpDraft(prev => ({ ...(prev || smtpForm), host: e.target.value }))}
@@ -3588,7 +3588,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     />
                   </div>
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400 mb-2">Port</div>
+                    <div className="text-xs text-zinc-400 mb-2">Port</div>
                     <input
                       type="number"
                       value={smtpForm.port ?? ''}
@@ -3604,11 +3604,11 @@ const sendDailyReport = useCallback((dateParam) => {
                         onChange={(e) => setSmtpDraft(prev => ({ ...(prev || smtpForm), secure: e.target.checked }))}
                         className="ui-checkbox"
                       />
-                      <label htmlFor="smtp-secure" className="text-slate-300">SSL/TLS (465)</label>
+                      <label htmlFor="smtp-secure" className="text-zinc-300">SSL/TLS (465)</label>
                     </div>
                   </div>
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400 mb-2">Gönderici (User)</div>
+                    <div className="text-xs text-zinc-400 mb-2">Gönderici (User)</div>
                     <input
                       value={smtpForm.user || ''}
                       onChange={(e) => setSmtpDraft(prev => ({ ...(prev || smtpForm), user: e.target.value }))}
@@ -3620,7 +3620,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400 mb-2">Şifre</div>
+                    <div className="text-xs text-zinc-400 mb-2">Şifre</div>
                     <input
                       type="password"
                       value={smtpPassInput}
@@ -3630,7 +3630,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     />
                   </div>
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400 mb-2">Gönderen Adı</div>
+                    <div className="text-xs text-zinc-400 mb-2">Gönderen Adı</div>
                     <input
                       value={smtpForm.fromName || ''}
                       onChange={(e) => setSmtpDraft(prev => ({ ...(prev || smtpForm), fromName: e.target.value }))}
@@ -3645,11 +3645,11 @@ const sendDailyReport = useCallback((dateParam) => {
                         onChange={(e) => setSmtpDraft(prev => ({ ...(prev || smtpForm), enabled: e.target.checked }))}
                         className="ui-checkbox"
                       />
-                      <label htmlFor="smtp-enabled" className="text-slate-300">Zamanlayıcı aktif</label>
+                      <label htmlFor="smtp-enabled" className="text-zinc-300">Zamanlayıcı aktif</label>
                     </div>
                   </div>
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400 mb-2">Zaman</div>
+                    <div className="text-xs text-zinc-400 mb-2">Zaman</div>
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         type="number"
@@ -3674,13 +3674,13 @@ const sendDailyReport = useCallback((dateParam) => {
                         onChange={(e) => setSmtpDraft(prev => ({ ...(prev || smtpForm), allowInvalidCerts: e.target.checked }))}
                         className="ui-checkbox"
                       />
-                      <label htmlFor="smtp-allow-invalid" className="text-slate-300">Sertifika doğrulama kapalı</label>
+                      <label htmlFor="smtp-allow-invalid" className="text-zinc-300">Sertifika doğrulama kapalı</label>
                     </div>
                   </div>
                 </div>
 
                 <div className="ui-panel mt-3">
-                  <div className="text-xs text-slate-400 mb-2">Alıcılar (satır satır veya virgülle)</div>
+                  <div className="text-xs text-zinc-400 mb-2">Alıcılar (satır satır veya virgülle)</div>
                   <textarea
                     value={smtpRecipientsText}
                     onChange={(e) => setSmtpRecipientsText(e.target.value)}
@@ -3690,23 +3690,23 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400">Son calisma</div>
+                    <div className="text-xs text-zinc-400">Son calisma</div>
                     <div className="text-sm mt-1">{formatSyncTime(emailSchedulerStatus?.lastRunTime)}</div>
                   </div>
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400">Durum</div>
+                    <div className="text-xs text-zinc-400">Durum</div>
                     <div className="text-sm mt-1">{emailSchedulerStatus?.lastRunStatus || '-'}</div>
                   </div>
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400">Sonraki</div>
+                    <div className="text-xs text-zinc-400">Sonraki</div>
                     <div className="text-sm mt-1">{formatSyncTime(emailSchedulerStatus?.nextRun)}</div>
                   </div>
                   <div className="ui-panel">
-                    <div className="text-xs text-slate-400">Son hata</div>
+                    <div className="text-xs text-zinc-400">Son hata</div>
                     <div className="text-[11px] text-red-300 break-words">{emailSchedulerStatus?.lastRunError || '-'}</div>
                   </div>
                 </div>
-                <div className="text-[10px] text-slate-500 mt-2 break-all">
+                <div className="text-[10px] text-zinc-500 mt-2 break-all">
                   Plan: {emailSchedulerStatus?.schedule || '-'} | Aktif: {emailSchedulerStatus?.enabled ? 'Evet' : 'Hayir'} | Son basarili rapor: {emailSchedulerStatus?.lastSuccessDateISO || '-'} | Dry-run: {smtpForm.dryRun ? 'Acik' : 'Kapali'}
                 </div>
               </div>
@@ -3728,42 +3728,42 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Son Yedek</div>
+                  <div className="text-xs text-zinc-400">Son Yedek</div>
                   <div className="text-sm mt-1">{formatSyncTime(backupStatus?.lastRunTime)}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Durum</div>
+                  <div className="text-xs text-zinc-400">Durum</div>
                   <div className="text-sm mt-1">{backupStatus?.lastRunStatus || '-'}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Sonraki</div>
+                  <div className="text-xs text-zinc-400">Sonraki</div>
                   <div className="text-sm mt-1">{formatSyncTime(backupStatus?.nextRun)}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Son Hata</div>
+                  <div className="text-xs text-zinc-400">Son Hata</div>
                   <div className="text-[11px] text-red-300 break-words">{backupStatus?.lastRunError || '-'}</div>
                 </div>
               </div>
-              <div className="text-[10px] text-slate-500 mt-2 break-all">
+              <div className="text-[10px] text-zinc-500 mt-2 break-all">
                 Klasör: {backupStatus?.folder || '-'} | Saklama: {backupStatus?.retention ?? '-'}
               </div>
             </div>
           )}
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-            <div className="bg-gradient-to-br from-blue-600 to-blue-800 p-5 rounded-xl shadow-lg"><div className="flex items-center justify-between"><div><p className="text-blue-200 text-sm font-medium">Bugün Toplam</p><p className="text-3xl font-bold text-white mt-1">{stats.today}</p></div><Activity className="text-blue-300" size={40} /></div></div>
-            <div className="bg-gradient-to-br from-green-600 to-green-800 p-5 rounded-xl shadow-lg"><div className="flex items-center justify-between"><div><p className="text-green-200 text-sm font-medium">Şu An İçeride</p><p className="text-3xl font-bold text-white mt-1">{stats.activeNow}</p></div><Users className="text-green-300" size={40} /></div></div>
-            <div className={`bg-gradient-to-br ${stats.longStayCount > 0 ? 'from-red-600 to-red-800' : 'from-slate-600 to-slate-800'} p-5 rounded-xl shadow-lg`}><div className="flex items-center justify-between"><div><p className={stats.longStayCount > 0 ? 'text-red-200' : 'text-slate-300'}>4+ Saat İçeride</p><p className="text-3xl font-bold text-white mt-1">{stats.longStayCount}</p></div><AlertCircle className={stats.longStayCount > 0 ? 'text-red-300 animate-pulse' : 'text-slate-400'} size={40} /></div></div>
-            <div className="bg-gradient-to-br from-purple-600 to-purple-800 p-5 rounded-xl shadow-lg"><div className="flex items-center justify-between"><div><p className="text-purple-200 text-sm font-medium">Bu Hafta</p><p className="text-3xl font-bold text-white mt-1">{stats.week}</p></div><TrendingUp className="text-purple-300" size={40} /></div></div>
-            <div className="bg-gradient-to-br from-orange-600 to-orange-800 p-5 rounded-xl shadow-lg"><div className="flex items-center justify-between"><div><p className="text-orange-200 text-sm font-medium">Ort. Kalı? Süresi</p><p className="text-2xl font-bold text-white mt-1">{Math.floor(stats.avgStayMins / 60)}s {stats.avgStayMins % 60}dk</p></div><Timer className="text-orange-300" size={40} /></div></div>
+            <div className="bg-gradient-to-br from-amber-600/90 to-amber-800/80 p-5 rounded-xl shadow-lg border border-amber-500/20"><div className="flex items-center justify-between"><div><p className="text-amber-200 text-sm font-medium">Bugün Toplam</p><p className="text-3xl font-bold text-white mt-1">{stats.today}</p></div><Activity className="text-amber-300" size={40} /></div></div>
+            <div className="bg-gradient-to-br from-emerald-600/90 to-emerald-800/80 p-5 rounded-xl shadow-lg border border-emerald-500/20"><div className="flex items-center justify-between"><div><p className="text-emerald-200 text-sm font-medium">Şu An İçeride</p><p className="text-3xl font-bold text-white mt-1">{stats.activeNow}</p></div><Users className="text-emerald-300" size={40} /></div></div>
+            <div className={`bg-gradient-to-br ${stats.longStayCount > 0 ? 'from-red-600/90 to-red-800/80 border-red-500/20' : 'from-zinc-700/80 to-zinc-800/80 border-zinc-600/20'} p-5 rounded-xl shadow-lg border`}><div className="flex items-center justify-between"><div><p className={stats.longStayCount > 0 ? 'text-red-200' : 'text-zinc-300'}>4+ Saat İçeride</p><p className="text-3xl font-bold text-white mt-1">{stats.longStayCount}</p></div><AlertCircle className={stats.longStayCount > 0 ? 'text-red-300 animate-pulse' : 'text-zinc-400'} size={40} /></div></div>
+            <div className="bg-gradient-to-br from-orange-600/90 to-orange-800/80 p-5 rounded-xl shadow-lg border border-orange-500/20"><div className="flex items-center justify-between"><div><p className="text-orange-200 text-sm font-medium">Bu Hafta</p><p className="text-3xl font-bold text-white mt-1">{stats.week}</p></div><TrendingUp className="text-orange-300" size={40} /></div></div>
+            <div className="bg-gradient-to-br from-yellow-600/90 to-amber-800/80 p-5 rounded-xl shadow-lg border border-yellow-500/20"><div className="flex items-center justify-between"><div><p className="text-yellow-200 text-sm font-medium">Ort. Kalış Süresi</p><p className="text-2xl font-bold text-white mt-1">{Math.floor(stats.avgStayMins / 60)}s {stats.avgStayMins % 60}dk</p></div><Timer className="text-yellow-300" size={40} /></div></div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="ui-card p-5">
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Clock className="text-blue-400" /> Bugün Detay</h3>
               <div className="space-y-3">
-                <div className="flex justify-between items-center p-3 bg-slate-900 rounded"><span className="flex items-center gap-2"><Car className="text-blue-400" size={18} /> Araç Girişi</span><span className="font-bold text-xl">{stats.todayVehicle}</span></div>
-                <div className="flex justify-between items-center p-3 bg-slate-900 rounded"><span className="flex items-center gap-2"><User className="text-purple-400" size={18} /> Ziyaretçi</span><span className="font-bold text-xl">{stats.todayVisitor}</span></div>
+                <div className="flex justify-between items-center p-3 bg-zinc-900 rounded"><span className="flex items-center gap-2"><Car className="text-blue-400" size={18} /> Araç Girişi</span><span className="font-bold text-xl">{stats.todayVehicle}</span></div>
+                <div className="flex justify-between items-center p-3 bg-zinc-900 rounded"><span className="flex items-center gap-2"><User className="text-purple-400" size={18} /> Ziyaretçi</span><span className="font-bold text-xl">{stats.todayVisitor}</span></div>
               </div>
             </div>
 
@@ -3771,7 +3771,7 @@ const sendDailyReport = useCallback((dateParam) => {
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><PieChart className="text-green-400" /> Kategori Dağılımı</h3>
               <div className="space-y-2 max-h-[200px] overflow-y-auto">
                 {Object.entries(stats.categoryStats).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([cat, count]) => (
-                  <div key={cat} className="flex justify-between items-center p-2 bg-slate-900 rounded text-sm"><span className="truncate">{cat}</span><span className="font-bold bg-slate-700 px-2 py-1 rounded">{count}</span></div>
+                  <div key={cat} className="flex justify-between items-center p-2 bg-zinc-900 rounded text-sm"><span className="truncate">{cat}</span><span className="font-bold bg-zinc-700 px-2 py-1 rounded">{count}</span></div>
                 ))}
               </div>
             </div>
@@ -3783,7 +3783,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   const maxCount = Math.max(...stats.dailyStats.map(d => d.count), 1);
                   const height = (day.count / maxCount) * 100;
                   return (
-                    <div key={idx} className="flex flex-col items-center flex-1"><span className="text-xs font-bold mb-1">{day.count}</span><div className="w-full bg-gradient-to-t from-blue-600 to-blue-400 rounded-t transition-all" style={{ height: `${Math.max(height, 5)}%` }}></div><span className="text-[10px] text-slate-400 mt-1 text-center">{day.date}</span></div>
+                    <div key={idx} className="flex flex-col items-center flex-1"><span className="text-xs font-bold mb-1">{day.count}</span><div className="w-full bg-gradient-to-t from-blue-600 to-blue-400 rounded-t transition-all" style={{ height: `${Math.max(height, 5)}%` }}></div><span className="text-[10px] text-zinc-400 mt-1 text-center">{day.date}</span></div>
                   );
                 })}
               </div>
@@ -3794,7 +3794,7 @@ const sendDailyReport = useCallback((dateParam) => {
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Layers className="text-yellow-400" /> Bugünkü Vardiya Dağılımı</h3>
             <div className="grid grid-cols-3 gap-4">
               {['Vardiya 1 (08:00-16:00)', 'Vardiya 2 (16:00-00:00)', 'Vardiya 3 (00:00-08:00)'].map(shift => (
-                <div key={shift} className={`p-4 rounded-xl text-center ${currentShift === shift ? 'bg-blue-600' : 'bg-slate-900'}`}><p className="text-sm text-slate-300">{shift.split(' ')[0]} {shift.split(' ')[1]}</p><p className="text-2xl font-bold mt-1">{stats.shiftStats[shift] || 0}</p></div>
+                <div key={shift} className={`p-4 rounded-xl text-center ${currentShift === shift ? 'bg-blue-600' : 'bg-zinc-900'}`}><p className="text-sm text-zinc-300">{shift.split(' ')[0]} {shift.split(' ')[1]}</p><p className="text-2xl font-bold mt-1">{stats.shiftStats[shift] || 0}</p></div>
               ))}
             </div>
           </div>
@@ -3804,17 +3804,17 @@ const sendDailyReport = useCallback((dateParam) => {
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Star className="text-yellow-400" /> Sık Gelen Araç/Ziyaretçiler</h3>
               <div className="space-y-2 max-h-[300px] overflow-y-auto">
                 {frequentVisitors.length > 0 ? frequentVisitors.map((visitor, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-slate-900 rounded-lg hover:bg-slate-700 transition-all group">
+                  <div key={idx} className="flex items-center justify-between p-3 bg-zinc-900 rounded-lg hover:bg-zinc-700 transition-all group">
                     <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${idx < 3 ? 'bg-yellow-500 text-black' : 'bg-slate-700 text-white'}`}>{idx + 1}</div>
-                      <div><p className="font-bold text-white">{visitor.key}</p><p className="text-xs text-slate-400">{visitor.category} • {visitor.host}</p></div>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${idx < 3 ? 'bg-yellow-500 text-black' : 'bg-zinc-700 text-white'}`}>{idx + 1}</div>
+                      <div><p className="font-bold text-white">{visitor.key}</p><p className="text-xs text-zinc-400">{visitor.category} • {visitor.host}</p></div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <div className="text-right"><p className="font-bold text-blue-400">{visitor.count} kez</p><p className="text-[10px] text-slate-500">Son: {new Date(visitor.lastVisit).toLocaleDateString('tr-TR')}</p></div>
+                      <div className="text-right"><p className="font-bold text-blue-400">{visitor.count} kez</p><p className="text-[10px] text-zinc-500">Son: {new Date(visitor.lastVisit).toLocaleDateString('tr-TR')}</p></div>
                       <button onClick={() => quickEntry(visitor.key, visitor.category, visitor.host)} className="opacity-0 group-hover:opacity-100 bg-green-600 hover:bg-green-500 text-white p-2 rounded transition-all" title="Hızlı Giriş"><Zap size={14} /></button>
                     </div>
                   </div>
-                )) : <div className="text-center text-slate-500 py-8 italic">Henüz yeterli veri yok</div>}
+                )) : <div className="text-center text-zinc-500 py-8 italic">Henüz yeterli veri yok</div>}
               </div>
             </div>
 
@@ -3822,10 +3822,10 @@ const sendDailyReport = useCallback((dateParam) => {
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Zap className="text-green-400" /> Hızlı İşlemler</h3>
               <div className="space-y-4">
                 <div className="ui-panel-lg">
-                  <div className="flex justify-between items-center mb-3"><span className="text-slate-400 text-sm">Şu an içeride</span><span className="text-2xl font-bold text-green-400">{activeLogs.length}</span></div>
+                  <div className="flex justify-between items-center mb-3"><span className="text-zinc-400 text-sm">Şu an içeride</span><span className="text-2xl font-bold text-green-400">{activeLogs.length}</span></div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="bg-slate-800 p-2 rounded flex justify-between"><span className="text-slate-400">Araç</span><span className="font-bold">{activeVehicleCount}</span></div>
-                    <div className="bg-slate-800 p-2 rounded flex justify-between"><span className="text-slate-400">Ziyaretçi</span><span className="font-bold">{activeVisitorCount}</span></div>
+                    <div className="bg-zinc-800 p-2 rounded flex justify-between"><span className="text-zinc-400">Araç</span><span className="font-bold">{activeVehicleCount}</span></div>
+                    <div className="bg-zinc-800 p-2 rounded flex justify-between"><span className="text-zinc-400">Ziyaretçi</span><span className="font-bold">{activeVisitorCount}</span></div>
                   </div>
                 </div>
                 {longStayLogsList.length > 0 && (
@@ -3842,12 +3842,12 @@ const sendDailyReport = useCallback((dateParam) => {
                   </div>
                 )}
                 <div className="ui-panel-lg">
-                  <p className="text-slate-400 text-sm mb-2">Son Çıkışlar</p>
+                  <p className="text-zinc-400 text-sm mb-2">Son Çıkışlar</p>
                   <div className="space-y-1 max-h-[100px] overflow-y-auto">
                     {recentExitedLogs.map(log => (
-                      <div key={log.id} className="flex justify-between items-center text-sm text-slate-300">
+                      <div key={log.id} className="flex justify-between items-center text-sm text-zinc-300">
                         <span>{log.plate || log.name}</span>
-                        <span className="text-slate-500">{new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="text-zinc-500">{new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     ))}
                   </div>
@@ -3877,19 +3877,19 @@ const sendDailyReport = useCallback((dateParam) => {
           <div className="space-y-4">
             <FormField label="RAPOR TARİHİ"><Input type="date" value={reportDateFrom} onChange={e => setReportDateFrom(e.target.value)} max={new Date().toISOString().split('T')[0]} /></FormField>
             <div className="ui-panel-lg">
-              <p className="text-slate-400 text-sm mb-2">Alıcılar:</p>
+              <p className="text-zinc-400 text-sm mb-2">Alıcılar:</p>
               {isElectron ? (
                 (emailSettings?.recipients?.length || 0) > 0 ? (
                   <ul className="text-sm space-y-1">
                     {emailSettings.recipients.map((r) => (
-                      <li key={r} className="text-slate-300">• {r}</li>
+                      <li key={r} className="text-zinc-300">• {r}</li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-sm text-slate-500 italic">SMTP alıcıları ayarlanmamış</p>
+                  <p className="text-sm text-zinc-500 italic">SMTP alıcıları ayarlanmamış</p>
                 )
               ) : (
-                <p className="text-sm text-slate-500 italic">Web modunda rapor Excel olarak indirilir</p>
+                <p className="text-sm text-zinc-500 italic">Web modunda rapor Excel olarak indirilir</p>
               )}
             </div>
             <div className="flex gap-3 pt-2">
@@ -3915,7 +3915,7 @@ const sendDailyReport = useCallback((dateParam) => {
             <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
             <div>
               <h1 className="text-xl font-bold">Verileri Yükle</h1>
-              <div className="text-[10px] text-slate-500">Build: {BUILD_TIME}</div>
+              <div className="text-[10px] text-zinc-500">Build: {BUILD_TIME}</div>
             </div>
           </div>
           <div className="flex gap-2">
@@ -3937,10 +3937,10 @@ const sendDailyReport = useCallback((dateParam) => {
               <Folder className="text-blue-400" />
               <h2 className="text-xl font-bold">CSV İçeri Aktar</h2>
             </div>
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-zinc-400">
               CSV dosyası seçin. Kayıtlar <code className="text-xs">created_at</code> alanına göre eşleştirilir; aynı zaman damgası varsa güncellenir.
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-zinc-500">
               Beklenen kolonlar: event_type, type, sub_category, shift, plate, driver, name, host, note, location, seal_number,
               seal_number_entry, seal_number_exit, tc_no, phone, user_email, created_at, exit_at.
             </p>
@@ -3962,8 +3962,8 @@ const sendDailyReport = useCallback((dateParam) => {
                   disabled={importing}
                 />
               </FormField>
-              <div className="text-xs text-slate-400">
-                {importFileName ? <>Seçilen dosya: <span className="text-slate-200">{importFileName}</span></> : 'Dosya seçilmedi'}
+              <div className="text-xs text-zinc-400">
+                {importFileName ? <>Seçilen dosya: <span className="text-zinc-200">{importFileName}</span></> : 'Dosya seçilmedi'}
               </div>
             </div>
 
@@ -3983,8 +3983,8 @@ const sendDailyReport = useCallback((dateParam) => {
 
             {importing && (
               <div className="space-y-2">
-                <div className="text-xs text-slate-400">İşleniyor: {progressDone}/{progressTotal}</div>
-                <div className="h-2 w-full bg-slate-800 rounded">
+                <div className="text-xs text-zinc-400">İşleniyor: {progressDone}/{progressTotal}</div>
+                <div className="h-2 w-full bg-zinc-800 rounded">
                   <div className="h-2 bg-blue-500 rounded" style={{ width: `${progressPct}%` }} />
                 </div>
               </div>
@@ -4020,7 +4020,7 @@ const sendDailyReport = useCallback((dateParam) => {
             <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
             <div>
               <h1 className="text-xl font-bold">Geliştirici Audit Paneli</h1>
-              <div className="text-xs text-slate-400">{session?.user?.username || session?.user?.email} | {activeRole}</div>
+              <div className="text-xs text-zinc-400">{session?.user?.username || session?.user?.email} | {activeRole}</div>
             </div>
           </div>
           <div className="flex gap-2">
@@ -4075,14 +4075,14 @@ const sendDailyReport = useCallback((dateParam) => {
             <div className="max-h-[520px] overflow-y-auto space-y-2">
               {(enhancedAuditEnabled ? filteredAuditLogs : auditLogs).map((item) => (
                 <div key={item.id} className="ui-panel text-xs">
-                  <div className="text-slate-300 font-semibold">{item.action}</div>
-                  <div className="text-slate-500">{new Date(item.at).toLocaleString('tr-TR')}</div>
-                  <div className="text-slate-400">{item.user} | {item.role}</div>
-                  {item.message ? <div className="text-slate-300 break-words mt-1">{item.message}</div> : null}
-                  {enhancedAuditEnabled && item.hash ? <div className="text-[10px] text-slate-500 mt-1">#{item.hash}</div> : null}
+                  <div className="text-zinc-300 font-semibold">{item.action}</div>
+                  <div className="text-zinc-500">{new Date(item.at).toLocaleString('tr-TR')}</div>
+                  <div className="text-zinc-400">{item.user} | {item.role}</div>
+                  {item.message ? <div className="text-zinc-300 break-words mt-1">{item.message}</div> : null}
+                  {enhancedAuditEnabled && item.hash ? <div className="text-[10px] text-zinc-500 mt-1">#{item.hash}</div> : null}
                 </div>
               ))}
-              {(enhancedAuditEnabled ? filteredAuditLogs.length : auditLogs.length) === 0 ? <div className="text-sm text-slate-500">Kayit yok.</div> : null}
+              {(enhancedAuditEnabled ? filteredAuditLogs.length : auditLogs.length) === 0 ? <div className="text-sm text-zinc-500">Kayit yok.</div> : null}
             </div>
           </Card>
 
@@ -4091,15 +4091,15 @@ const sendDailyReport = useCallback((dateParam) => {
             <div className="max-h-[520px] overflow-y-auto space-y-2">
               {serverAuditLogs.map((item) => (
                 <div key={item.id} className="ui-panel text-xs">
-                  <div className="text-slate-300 font-semibold">{item.action}</div>
-                  <div className="text-slate-500">{new Date(item.created_at).toLocaleString('tr-TR')}</div>
-                  <div className="text-slate-400">
+                  <div className="text-zinc-300 font-semibold">{item.action}</div>
+                  <div className="text-zinc-500">{new Date(item.created_at).toLocaleString('tr-TR')}</div>
+                  <div className="text-zinc-400">
                     {(item.actor_user?.username || item.actor_user?.email || 'system')} | {item.object_type || '-'} | {item.object_id || '-'}
                   </div>
-                  {item.message ? <div className="text-slate-300 break-words mt-1">{item.message}</div> : null}
+                  {item.message ? <div className="text-zinc-300 break-words mt-1">{item.message}</div> : null}
                 </div>
               ))}
-              {serverAuditLogs.length === 0 ? <div className="text-sm text-slate-500">Sunucudan log gelmedi. Yenile butonuna basın.</div> : null}
+              {serverAuditLogs.length === 0 ? <div className="text-sm text-zinc-500">Sunucudan log gelmedi. Yenile butonuna basın.</div> : null}
             </div>
           </Card>
         </main>
@@ -4118,7 +4118,7 @@ const sendDailyReport = useCallback((dateParam) => {
               <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
               <div>
                 <h1 className="text-xl font-bold">Malhotra Güvenlik Paneli</h1>
-                <div className="text-[10px] text-slate-500">Build: {BUILD_TIME}</div>
+                <div className="text-[10px] text-zinc-500">Build: {BUILD_TIME}</div>
               </div>
             </div>
             <div className="flex gap-2">
@@ -4157,8 +4157,8 @@ const sendDailyReport = useCallback((dateParam) => {
             <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
             <div>
               <h1 className="text-xl font-bold">HR & Puantaj Paneli</h1>
-              <div className="text-xs text-slate-400">API: {effectiveLocalApiUrl}</div>
-              <div className="text-[10px] text-slate-500">Build: {BUILD_TIME}</div>
+              <div className="text-xs text-zinc-400">API: {effectiveLocalApiUrl}</div>
+              <div className="text-[10px] text-zinc-500">Build: {BUILD_TIME}</div>
             </div>
           </div>
           <div className="flex gap-2">
@@ -4176,9 +4176,9 @@ const sendDailyReport = useCallback((dateParam) => {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
               <div>
                 <h3 className="text-lg font-bold">Yerel API Kimlik</h3>
-                <p className="text-xs text-slate-400">JWT token ile HR API'lerine erişim.</p>
+                <p className="text-xs text-zinc-400">JWT token ile HR API'lerine erişim.</p>
               </div>
-              <div className="text-xs text-slate-500">Token: {localApiToken ? 'Hazır' : 'Yok'}</div>
+              <div className="text-xs text-zinc-500">Token: {localApiToken ? 'Hazır' : 'Yok'}</div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
               <FormField label="JWT Token" htmlFor="hr-jwt-token">
@@ -4259,7 +4259,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <FormField label="Açıklama">
                     <textarea className="ui-input h-24 resize-none" value={absenceTypeDraft.description} onChange={(e) => setAbsenceTypeDraft({ ...absenceTypeDraft, description: e.target.value })} />
                   </FormField>
-                  <div className="grid grid-cols-2 gap-2 text-sm text-slate-300">
+                  <div className="grid grid-cols-2 gap-2 text-sm text-zinc-300">
                     <label className="flex items-center gap-2"><input type="checkbox" className="ui-checkbox" checked={absenceTypeDraft.is_paid} onChange={(e) => setAbsenceTypeDraft({ ...absenceTypeDraft, is_paid: e.target.checked })} /> Ücretli</label>
                     <label className="flex items-center gap-2"><input type="checkbox" className="ui-checkbox" checked={absenceTypeDraft.affects_payroll} onChange={(e) => setAbsenceTypeDraft({ ...absenceTypeDraft, affects_payroll: e.target.checked })} /> Bordroya Etki</label>
                     <label className="flex items-center gap-2"><input type="checkbox" className="ui-checkbox" checked={absenceTypeDraft.affects_sgk} onChange={(e) => setAbsenceTypeDraft({ ...absenceTypeDraft, affects_sgk: e.target.checked })} /> SGK Etkisi</label>
@@ -4278,7 +4278,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
                 <div className="ui-table-wrap max-h-[360px]">
                   <table className="ui-table">
-                    <thead className="bg-slate-900 text-slate-200 sticky top-0">
+                    <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
                       <tr>
                         <th className="p-3">Ad</th>
                         <th className="p-3">Kod</th>
@@ -4286,13 +4286,13 @@ const sendDailyReport = useCallback((dateParam) => {
                         <th className="p-3">Ücret/SGK</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-700">
+                    <tbody className="divide-y divide-zinc-700">
                       {absenceTypes.map((t) => (
                         <tr key={t.id}>
                           <td className="p-3 text-sm font-semibold">{t.name}</td>
-                          <td className="p-3 text-xs text-slate-300">{t.code}</td>
+                          <td className="p-3 text-xs text-zinc-300">{t.code}</td>
                           <td className="p-3 text-xs">{t.default_unit}</td>
-                          <td className="p-3 text-xs text-slate-400">{t.is_paid ? 'Ücretli' : 'Ücretsiz'} / {t.affects_sgk ? 'SGK' : '-'}</td>
+                          <td className="p-3 text-xs text-zinc-400">{t.is_paid ? 'Ücretli' : 'Ücretsiz'} / {t.affects_sgk ? 'SGK' : '-'}</td>
                         </tr>
                       ))}
                       {absenceTypes.length === 0 && (
@@ -4338,7 +4338,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <FormField label="Not">
                     <input className="ui-input" value={absenceRecordDraft.note} onChange={(e) => setAbsenceRecordDraft({ ...absenceRecordDraft, note: e.target.value })} />
                   </FormField>
-                  <div className="flex items-center gap-2 text-sm text-slate-300">
+                  <div className="flex items-center gap-2 text-sm text-zinc-300">
                     <input type="checkbox" className="ui-checkbox" checked={absenceRecordDraft.is_excused} onChange={(e) => setAbsenceRecordDraft({ ...absenceRecordDraft, is_excused: e.target.checked })} />
                     Mazeretli
                   </div>
@@ -4367,7 +4367,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
                 <div className="ui-table-wrap max-h-[360px]">
                   <table className="ui-table">
-                    <thead className="bg-slate-900 text-slate-200 sticky top-0">
+                    <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
                       <tr>
                         <th className="p-3">Personel</th>
                         <th className="p-3">Tür</th>
@@ -4376,7 +4376,7 @@ const sendDailyReport = useCallback((dateParam) => {
                         <th className="p-3">Durum</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-700">
+                    <tbody className="divide-y divide-zinc-700">
                       {absenceRecords.map((r) => (
                         <tr key={r.id}>
                           <td className="p-3 text-xs">{r.person_name || r.person}</td>
@@ -4422,7 +4422,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <FormField label="Açıklama">
                     <input className="ui-input" value={shiftDraft.description} onChange={(e) => setShiftDraft({ ...shiftDraft, description: e.target.value })} />
                   </FormField>
-                  <label className="flex items-center gap-2 text-sm text-slate-300">
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
                     <input type="checkbox" className="ui-checkbox" checked={shiftDraft.is_active} onChange={(e) => setShiftDraft({ ...shiftDraft, is_active: e.target.checked })} />
                     Aktif
                   </label>
@@ -4438,14 +4438,14 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
                 <div className="ui-table-wrap max-h-[360px]">
                   <table className="ui-table">
-                    <thead className="bg-slate-900 text-slate-200 sticky top-0">
+                    <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
                       <tr>
                         <th className="p-3">Ad</th>
                         <th className="p-3">Saat</th>
                         <th className="p-3">Tolerans</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-700">
+                    <tbody className="divide-y divide-zinc-700">
                       {workShifts.map((s) => (
                         <tr key={s.id}>
                           <td className="p-3 text-sm font-semibold">{s.name}</td>
@@ -4483,7 +4483,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <FormField label="Bitiş (opsiyonel)">
                     <input type="date" className="ui-input" value={assignmentDraft.effective_to} onChange={(e) => setAssignmentDraft({ ...assignmentDraft, effective_to: e.target.value })} />
                   </FormField>
-                  <label className="flex items-center gap-2 text-sm text-slate-300">
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
                     <input type="checkbox" className="ui-checkbox" checked={assignmentDraft.is_active} onChange={(e) => setAssignmentDraft({ ...assignmentDraft, is_active: e.target.checked })} />
                     Aktif
                   </label>
@@ -4500,7 +4500,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
                 <div className="ui-table-wrap max-h-[360px]">
                   <table className="ui-table">
-                    <thead className="bg-slate-900 text-slate-200 sticky top-0">
+                    <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
                       <tr>
                         <th className="p-3">Personel</th>
                         <th className="p-3">Vardiya</th>
@@ -4508,7 +4508,7 @@ const sendDailyReport = useCallback((dateParam) => {
                         <th className="p-3">Bitiş</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-700">
+                    <tbody className="divide-y divide-zinc-700">
                       {shiftAssignments.map((a) => (
                         <tr key={a.id}>
                           <td className="p-3 text-xs">{a.person_name || a.person}</td>
@@ -4551,25 +4551,25 @@ const sendDailyReport = useCallback((dateParam) => {
                 <Card className="p-4">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                     <div className="ui-panel">
-                      <div className="text-xs text-slate-400">Toplam Dakika</div>
+                      <div className="text-xs text-zinc-400">Toplam Dakika</div>
                       <div className="text-lg font-bold">{attendanceSummary.totals?.total_minutes || 0}</div>
                     </div>
                     <div className="ui-panel">
-                      <div className="text-xs text-slate-400">Geç Kalma</div>
+                      <div className="text-xs text-zinc-400">Geç Kalma</div>
                       <div className="text-lg font-bold">{attendanceSummary.totals?.late_minutes || 0}</div>
                     </div>
                     <div className="ui-panel">
-                      <div className="text-xs text-slate-400">Erken Çıkma</div>
+                      <div className="text-xs text-zinc-400">Erken Çıkma</div>
                       <div className="text-lg font-bold">{attendanceSummary.totals?.early_leave_minutes || 0}</div>
                     </div>
                     <div className="ui-panel">
-                      <div className="text-xs text-slate-400">Devamsız Gün</div>
+                      <div className="text-xs text-zinc-400">Devamsız Gün</div>
                       <div className="text-lg font-bold">{attendanceSummary.totals?.absent_days || 0}</div>
                     </div>
                   </div>
                   <div className="ui-table-wrap max-h-[420px]">
                     <table className="ui-table">
-                      <thead className="bg-slate-900 text-slate-200 sticky top-0">
+                      <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
                         <tr>
                           <th className="p-3">Tarih</th>
                           <th className="p-3">Vardiya</th>
@@ -4581,7 +4581,7 @@ const sendDailyReport = useCallback((dateParam) => {
                           <th className="p-3">Devamsız</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-700">
+                      <tbody className="divide-y divide-zinc-700">
                         {attendanceSummary.days?.map((d) => (
                           <tr key={d.date}>
                             <td className="p-3 text-xs">{d.date}</td>
@@ -4639,7 +4639,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     <FormField label="Para Birimi">
                       <input className="ui-input" value={payrollProfileDraft.currency} onChange={(e) => setPayrollProfileDraft({ ...payrollProfileDraft, currency: e.target.value })} />
                     </FormField>
-                    <label className="flex items-center gap-2 text-sm text-slate-300">
+                    <label className="flex items-center gap-2 text-sm text-zinc-300">
                       <input type="checkbox" className="ui-checkbox" checked={payrollProfileDraft.is_active} onChange={(e) => setPayrollProfileDraft({ ...payrollProfileDraft, is_active: e.target.checked })} />
                       Aktif
                     </label>
@@ -4656,7 +4656,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   </div>
                   <div className="ui-table-wrap max-h-[360px]">
                     <table className="ui-table">
-                      <thead className="bg-slate-900 text-slate-200 sticky top-0">
+                      <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
                         <tr>
                           <th className="p-3">Personel</th>
                           <th className="p-3">Tip</th>
@@ -4664,7 +4664,7 @@ const sendDailyReport = useCallback((dateParam) => {
                           <th className="p-3">Günlük</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-700">
+                      <tbody className="divide-y divide-zinc-700">
                         {payrollProfiles.map((p) => (
                           <tr key={p.id}>
                             <td className="p-3 text-xs">{p.person_name || p.person}</td>
@@ -4701,7 +4701,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 {payrollSummary && (
                   <div className="ui-table-wrap max-h-[420px] mt-4">
                     <table className="ui-table">
-                      <thead className="bg-slate-900 text-slate-200 sticky top-0">
+                      <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
                         <tr>
                           <th className="p-3">Personel</th>
                           <th className="p-3">Devamsız Gün</th>
@@ -4710,7 +4710,7 @@ const sendDailyReport = useCallback((dateParam) => {
                           <th className="p-3">Prim Kesintisi</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-700">
+                      <tbody className="divide-y divide-zinc-700">
                         {payrollSummary.persons?.map((p) => (
                           <tr key={p.person.id}>
                             <td className="p-3 text-xs">{p.person.full_name}</td>
@@ -4745,7 +4745,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 {sgkReport && (
                   <div className="ui-table-wrap max-h-[420px] mt-4">
                     <table className="ui-table">
-                      <thead className="bg-slate-900 text-slate-200 sticky top-0">
+                      <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
                         <tr>
                           <th className="p-3">SGK Kodu</th>
                           <th className="p-3">Personel</th>
@@ -4753,7 +4753,7 @@ const sendDailyReport = useCallback((dateParam) => {
                           <th className="p-3">Eksik Saat</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-700">
+                      <tbody className="divide-y divide-zinc-700">
                         {sgkReport.summary?.map((row, idx) => (
                           <tr key={`${row.sgk_code}-${row.person_id}-${idx}`}>
                             <td className="p-3 text-xs">{row.sgk_code}</td>
@@ -4811,22 +4811,22 @@ const sendDailyReport = useCallback((dateParam) => {
           <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
           <div>
             <h1 className="text-xl font-bold">Malhotra Güvenlik Paneli</h1>
-            <div className="flex items-center gap-2 text-xs text-slate-400">
+            <div className="flex items-center gap-2 text-xs text-zinc-400">
               {isOnline ? <span className="text-green-400 flex items-center gap-1"><Wifi size={12} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={12} /> Offline</span>}
               <span>| {session?.user?.email || 'local'}</span>
               {totalQueueCount > 0 && (
                 <span className="ui-pill">Kuyruk: {totalQueueCount}</span>
               )}
             </div>
-            <div className="text-[10px] text-slate-500 mt-1 break-all">
+            <div className="text-[10px] text-zinc-500 mt-1 break-all">
               Supabase: {supabaseUrl}
               {supabaseDebug.lastError ? ` | Error: ${supabaseDebug.lastError}` : ''}
               {supabaseDebug.lastCheckedAt ? ` | Check: ${new Date(supabaseDebug.lastCheckedAt).toLocaleTimeString('tr-TR')}` : ''}
             </div>
-            <div className="text-[10px] text-slate-500">Build: {BUILD_TIME}</div>
+            <div className="text-[10px] text-zinc-500">Build: {BUILD_TIME}</div>
           </div>
         </div>
-        <div className="ui-chip"><Layers size={18} className="text-orange-400" /><div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold uppercase">Aktif Vardiya</span><span className="text-white text-sm font-bold">{currentShift}</span></div></div>
+        <div className="ui-chip"><Layers size={18} className="text-orange-400" /><div className="flex flex-col"><span className="text-[10px] text-zinc-400 font-bold uppercase">Aktif Vardiya</span><span className="text-white text-sm font-bold">{currentShift}</span></div></div>
         <div className="flex items-center gap-2">
           {longStayCount > 0 && <div className="bg-red-600 text-white px-3 py-2 rounded-lg font-bold flex items-center gap-2 animate-pulse hidden md:flex"><AlertCircle size={18} /><span>{longStayCount} kişi 4+ saat!</span></div>}
           <button onClick={handleSystemReset} className="ui-btn-secondary" title="Takılı kalırsa sistemi yeniler"><RefreshCw size={16} /> Yenile</button>
@@ -4892,11 +4892,11 @@ const sendDailyReport = useCallback((dateParam) => {
                     <div className="relative">
                       <Input type="text" placeholder="34 AB 123" value={formData.plate || ''} onChange={(e) => { setFormData({ ...formData, plate: e.target.value.toUpperCase() }); setShowManagementList(true); }} onFocus={() => setShowManagementList(true)} className="uppercase text-lg tracking-widest font-mono border-purple-500/50" autoComplete="off" />
                       {showManagementList && formData.plate && (
-                        <div className="absolute z-50 w-full bg-slate-800 border border-slate-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
+                        <div className="absolute z-50 w-full bg-zinc-800 border border-zinc-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
                           {managementVehicleMatches.map((veh, idx) => (
                             <div
                               key={idx}
-                              className="p-3 hover:bg-purple-600 hover:text-white cursor-pointer border-b border-slate-700 last:border-0 text-sm transition-all flex items-center gap-2 font-mono"
+                              className="p-3 hover:bg-purple-600 hover:text-white cursor-pointer border-b border-zinc-700 last:border-0 text-sm transition-all flex items-center gap-2 font-mono"
                               onClick={() => {
                                 const [platePart, namePart] = veh.split(' - ');
                                 const isCompany = veh.includes('ŞİRKET') || veh.includes('HAVUZ');
@@ -4915,7 +4915,7 @@ const sendDailyReport = useCallback((dateParam) => {
                             </div>
                           ))}
                           {managementVehicleMatches.length === 0 && (
-                            <div className="p-3 text-slate-500 text-xs italic text-center">Listede bulunamadı.</div>
+                            <div className="p-3 text-zinc-500 text-xs italic text-center">Listede bulunamadı.</div>
                           )}
                         </div>
                       )}
@@ -4929,11 +4929,11 @@ const sendDailyReport = useCallback((dateParam) => {
                   <div className="bg-purple-900/20 p-3 rounded border border-purple-500/30 animate-in fade-in slide-in-from-top-2">
                     <label className="text-xs text-purple-300 flex items-center gap-1 mb-2 font-bold"><User size={12} /> {isExitDirection ? 'ÇIKIŞTA ARACI KULLANAN' : 'ARACI KULLANAN'}</label>
                     <div className="grid grid-cols-2 gap-2 mb-2">
-                      {vehicleSubTab === 'management' && !MANAGEMENT_VEHICLES.some(v => v.includes(formData.plate) && (v.includes('ŞİRKET') || v.includes('HAVUZ'))) && (<button type="button" onClick={() => setFormData({ ...formData, driver_type: 'owner' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'owner' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Araç Sahibi</button>)}
-                      <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'driver', driver: 'MURAT CİK' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'driver' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Fabrika Şoförü</button>
-                      <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'supervisor', driver: 'AHMET PEKER' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'supervisor' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Vardiya Amiri</button>
-                      <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'manual', driver: '' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'manual' ? 'bg-green-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Manuel Giriş</button>
-                      <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'other', driver: '' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'other' ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Diğer</button>
+                      {vehicleSubTab === 'management' && !MANAGEMENT_VEHICLES.some(v => v.includes(formData.plate) && (v.includes('ŞİRKET') || v.includes('HAVUZ'))) && (<button type="button" onClick={() => setFormData({ ...formData, driver_type: 'owner' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'owner' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Araç Sahibi</button>)}
+                      <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'driver', driver: 'MURAT CİK' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'driver' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Fabrika Şoförü</button>
+                      <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'supervisor', driver: 'AHMET PEKER' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'supervisor' ? 'bg-orange-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Vardiya Amiri</button>
+                      <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'manual', driver: '' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'manual' ? 'bg-green-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Manuel Giriş</button>
+                      <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'other', driver: '' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'other' ? 'bg-zinc-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Diğer</button>
                     </div>
                     {formData.driver_type === 'manual' && (
                       <div className="space-y-2">
@@ -4951,13 +4951,13 @@ const sendDailyReport = useCallback((dateParam) => {
                     <FormField label="SÜRÜCÜ ADI SOYADI">
                     {vehicleSubTab === 'staff' ? (
                       <div className="relative group">
-                        <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.driver || ''} onChange={(e) => { setFormData({ ...formData, driver: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} className="pl-10 border-blue-500/50 focus:bg-slate-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.driver && (<button onClick={() => setFormData({ ...formData, driver: '' })} className="absolute right-3 top-3 text-slate-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
+                        <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.driver || ''} onChange={(e) => { setFormData({ ...formData, driver: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.driver && (<button onClick={() => setFormData({ ...formData, driver: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
                         {showStaffList && formData.driver && (
-                          <div className="absolute z-50 w-full bg-slate-800 border border-slate-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
+                          <div className="absolute z-50 w-full bg-zinc-800 border border-zinc-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
                             {staffDriverMatches.map((person, idx) => (
                               <div
                                 key={idx}
-                                className="p-3 pl-10 hover:bg-blue-600 hover:text-white cursor-pointer border-b border-slate-700 last:border-0 text-sm transition-all flex items-center gap-2 group"
+                                className="p-3 pl-10 hover:bg-blue-600 hover:text-white cursor-pointer border-b border-zinc-700 last:border-0 text-sm transition-all flex items-center gap-2 group"
                                 onClick={() => {
                                   setFormData({ ...formData, driver: person, host: 'Fabrika' });
                                   setShowStaffList(false);
@@ -4968,7 +4968,7 @@ const sendDailyReport = useCallback((dateParam) => {
                               </div>
                             ))}
                             {staffDriverMatches.length === 0 && (
-                              <div className="p-4 text-slate-500 text-sm italic text-center">"{formData.driver}" bulunamadı.</div>
+                              <div className="p-4 text-zinc-500 text-sm italic text-center">"{formData.driver}" bulunamadı.</div>
                             )}
                           </div>
                         )}
@@ -5001,7 +5001,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <div className={`${isEntryDirection ? 'bg-green-900/20 border-green-500/30' : 'bg-red-900/20 border-red-500/30'} p-3 rounded border animate-in fade-in slide-in-from-top-2`}>
                     <label className={`text-xs ${isEntryDirection ? 'text-green-300' : 'text-red-300'} flex items-center gap-1 mb-1 font-bold`}>
                       <Lock size={12} /> {isEntryDirection ? 'GİRİŞ MÜHÜR NUMARASI' : 'ÇIKIŞ MÜHÜR NUMARASI'}
-                      <span className="text-slate-400 font-normal">(Opsiyonel)</span>
+                      <span className="text-zinc-400 font-normal">(Opsiyonel)</span>
                     </label>
                     <Input
                       type="text"
@@ -5016,14 +5016,14 @@ const sendDailyReport = useCallback((dateParam) => {
                       <button
                         type="button"
                         onClick={() => isEntryDirection ? setFormData({ ...formData, seal_number_entry: 'MÜHÜR YOK' }) : setFormData({ ...formData, seal_number_exit: 'MÜHÜR YOK' })}
-                        className="px-3 py-1.5 rounded text-xs font-bold bg-slate-700 hover:bg-slate-600 text-slate-300 transition-all flex items-center gap-1"
+                        className="px-3 py-1.5 rounded text-xs font-bold bg-zinc-700 hover:bg-zinc-600 text-zinc-300 transition-all flex items-center gap-1"
                       >
                         <X size={12} /> Mühür Yok
                       </button>
                       <button
                         type="button"
                         onClick={() => isEntryDirection ? setFormData({ ...formData, seal_number_entry: 'BELİRSİZ' }) : setFormData({ ...formData, seal_number_exit: 'BELİRSİZ' })}
-                        className="px-3 py-1.5 rounded text-xs font-bold bg-slate-700 hover:bg-slate-600 text-slate-300 transition-all"
+                        className="px-3 py-1.5 rounded text-xs font-bold bg-zinc-700 hover:bg-zinc-600 text-zinc-300 transition-all"
                       >
                         Belirsiz
                       </button>
@@ -5047,13 +5047,13 @@ const sendDailyReport = useCallback((dateParam) => {
                 <FormField label="ADI SOYADI">
                 {visitorSubTab === 'staff' ? (
                   <div className="relative group">
-                    <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.name || ''} onChange={(e) => { setFormData({ ...formData, name: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} className="pl-10 border-blue-500/50 focus:bg-slate-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.name && (<button onClick={() => setFormData({ ...formData, name: '' })} className="absolute right-3 top-3 text-slate-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
+                    <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.name || ''} onChange={(e) => { setFormData({ ...formData, name: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.name && (<button onClick={() => setFormData({ ...formData, name: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
                     {showStaffList && formData.name && (
-                      <div className="absolute z-50 w-full bg-slate-800 border border-slate-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
+                      <div className="absolute z-50 w-full bg-zinc-800 border border-zinc-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
                         {staffVisitorMatches.map((person, idx) => (
                           <div
                             key={idx}
-                            className="p-3 pl-10 hover:bg-blue-600 hover:text-white cursor-pointer border-b border-slate-700 last:border-0 text-sm transition-all flex items-center gap-2 group"
+                            className="p-3 pl-10 hover:bg-blue-600 hover:text-white cursor-pointer border-b border-zinc-700 last:border-0 text-sm transition-all flex items-center gap-2 group"
                             onClick={() => {
                               setFormData({ ...formData, name: person, host: 'Fabrika' });
                               setShowStaffList(false);
@@ -5064,7 +5064,7 @@ const sendDailyReport = useCallback((dateParam) => {
                           </div>
                         ))}
                         {staffVisitorMatches.length === 0 && (
-                          <div className="p-4 text-slate-500 text-sm italic text-center">"{formData.name}" bulunamadı.</div>
+                          <div className="p-4 text-zinc-500 text-sm italic text-center">"{formData.name}" bulunamadı.</div>
                         )}
                       </div>
                     )}
@@ -5084,7 +5084,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 {isEntryDirection && (
                   <div className="grid grid-cols-2 gap-2 mt-2">
                     <div><FormField label="TC KİMLİK NO"><div className="relative"><Select value={formData.tc_no === 'BELİRTİLMEDİ' ? 'BELİRTİLMEDİ' : (formData.tc_no ? 'MANUAL' : '')} onChange={e => { if (e.target.value === 'BELİRTİLMEDİ') setFormData({ ...formData, tc_no: 'BELİRTİLMEDİ' }); else setFormData({ ...formData, tc_no: '' }); }} className="mb-1"><option value="">TC Girmek İstiyorum</option><option value="BELİRTİLMEDİ">Belirtilmedi / Yok</option></Select>{formData.tc_no !== 'BELİRTİLMEDİ' && (<Input type="text" maxLength="11" placeholder="11 Haneli TC" value={formData.tc_no === 'BELİRTİLMEDİ' ? '' : formData.tc_no} onChange={e => setFormData({ ...formData, tc_no: e.target.value.replace(/\D/g, '') })} />)}</div></FormField></div>
-                    <div><FormField label="TELEFON"><div className="relative"><Input type="text" placeholder="05XX... (Opsiyonel)" value={formData.phone} onChange={e => setFormData({ ...formData, phone: formatPhone(e.target.value) })} /><Phone size={14} className="absolute right-3 top-3 text-slate-500" /></div></FormField></div>
+                    <div><FormField label="TELEFON"><div className="relative"><Input type="text" placeholder="05XX... (Opsiyonel)" value={formData.phone} onChange={e => setFormData({ ...formData, phone: formatPhone(e.target.value) })} /><Phone size={14} className="absolute right-3 top-3 text-zinc-500" /></div></FormField></div>
                   </div>
                 )}
               </div>
@@ -5146,11 +5146,11 @@ const sendDailyReport = useCallback((dateParam) => {
                       <Search className="absolute left-3 top-3 text-green-500" size={16} />
                     </div>
                     {showHostStaffList && hostSearchTerm && (
-                      <div className="absolute z-50 w-full bg-slate-800 border border-slate-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
+                      <div className="absolute z-50 w-full bg-zinc-800 border border-zinc-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
                         {hostStaffMatches.map((person, idx) => (
                           <div
                             key={idx}
-                            className="p-3 hover:bg-green-700 hover:text-white cursor-pointer border-b border-slate-700 last:border-0 text-sm transition-all flex items-center gap-2"
+                            className="p-3 hover:bg-green-700 hover:text-white cursor-pointer border-b border-zinc-700 last:border-0 text-sm transition-all flex items-center gap-2"
                             onClick={() => {
                               setFormData({ ...formData, host: person });
                               setShowHostStaffList(false);
@@ -5163,7 +5163,7 @@ const sendDailyReport = useCallback((dateParam) => {
                           </div>
                         ))}
                         {hostStaffMatches.length === 0 && (
-                          <div className="p-3 text-slate-500 text-xs italic text-center">Bulunamadı.</div>
+                          <div className="p-3 text-zinc-500 text-xs italic text-center">Bulunamadı.</div>
                         )}
                       </div>
                     )}
@@ -5203,13 +5203,13 @@ const sendDailyReport = useCallback((dateParam) => {
                   onChange={handleEntryAttachmentSelect}
                   className="ui-input"
                 />
-                <div className="text-[11px] text-slate-500 mt-2">
+                <div className="text-[11px] text-zinc-500 mt-2">
                   Maksimum {MAX_ATTACHMENTS_PER_LOG} dosya, dosya başına {humanFileSize(MAX_ATTACHMENT_SIZE_BYTES)}.
                 </div>
                 {entryAttachments.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {entryAttachments.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between text-xs bg-slate-900/60 rounded p-2">
+                      <div key={item.id} className="flex items-center justify-between text-xs bg-zinc-900/60 rounded p-2">
                         <div className="truncate pr-2">{item.name} ({humanFileSize(item.size)})</div>
                         <button type="button" onClick={() => removeEntryAttachment(item.id)} className="text-red-300 hover:text-red-200">Sil</button>
                       </div>
@@ -5227,17 +5227,17 @@ const sendDailyReport = useCallback((dateParam) => {
 
         {/* SAĞ: BUGÜNKÜ HAREKETLER */}
         <section className="lg:col-span-7 ui-card p-6 min-h-[500px] shadow-lg flex flex-col">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 pb-4 border-b border-slate-700 gap-3">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 pb-4 border-b border-zinc-700 gap-3">
             <h2 className="text-lg font-bold flex items-center gap-2">Bugünkü Hareketler</h2>
             <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
               <div className="relative flex-1 md:flex-none">
-                <Search className="absolute left-3 top-2.5 text-slate-500" size={16} />
+                <Search className="absolute left-3 top-2.5 text-zinc-500" size={16} />
                 <input
                   type="text"
                   placeholder="Ara..."
                   value={activeSearchTerm}
                   onChange={e => setActiveSearchTerm(e.target.value)}
-                  className="bg-slate-900 border border-slate-600 rounded pl-9 pr-3 py-2 text-sm text-white outline-none focus:border-orange-500 w-full md:w-48"
+                  className="bg-zinc-900 border border-zinc-600 rounded pl-9 pr-3 py-2 text-sm text-white outline-none focus:border-orange-500 w-full md:w-48"
                 />
               </div>
               <button
@@ -5325,7 +5325,7 @@ const sendDailyReport = useCallback((dateParam) => {
           </div>
 
           {/* VARDİYA BAZLI GÖRSEL GRAFİK */}
-          <div className="bg-slate-900/50 p-4 rounded-lg mb-4 border border-slate-700">
+          <div className="bg-zinc-900/50 p-4 rounded-lg mb-4 border border-zinc-700">
             <div className="flex items-center gap-2 mb-3">
               <CalendarClock className="text-blue-400" size={18} />
               <h3 className="text-sm font-bold text-blue-300">Vardiya Dağılımı (Girişler)</h3>
@@ -5337,16 +5337,16 @@ const sendDailyReport = useCallback((dateParam) => {
                 const isActiveShift = shift === currentShift;
 
                 return (
-                  <div key={shift} className={`p-3 rounded-lg transition-all ${isActiveShift ? 'bg-blue-600/30 border-2 border-blue-500 scale-105' : 'bg-slate-800 border border-slate-700'}`}>
+                  <div key={shift} className={`p-3 rounded-lg transition-all ${isActiveShift ? 'bg-blue-600/30 border-2 border-blue-500 scale-105' : 'bg-zinc-800 border border-zinc-700'}`}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-slate-300">{shift.split(' ')[0]}</span>
+                      <span className="text-xs font-bold text-zinc-300">{shift.split(' ')[0]}</span>
                       {isActiveShift && <span className="bg-blue-500 text-white text-[9px] px-2 py-0.5 rounded font-bold animate-pulse">AKTİF</span>}
                     </div>
                     <div className="text-2xl font-bold text-white mb-1">{count}</div>
-                    <div className="w-full bg-slate-700 rounded-full h-2 mb-1">
-                      <div className={`h-2 rounded-full transition-all duration-500 ${isActiveShift ? 'bg-blue-500' : 'bg-slate-500'}`} style={{ width: `${percentage}%` }}></div>
+                    <div className="w-full bg-zinc-700 rounded-full h-2 mb-1">
+                      <div className={`h-2 rounded-full transition-all duration-500 ${isActiveShift ? 'bg-blue-500' : 'bg-zinc-500'}`} style={{ width: `${percentage}%` }}></div>
                     </div>
-                    <div className="text-[10px] text-slate-400">{percentage}% / {shift.match(/\(([^)]+)\)/)[1]}</div>
+                    <div className="text-[10px] text-zinc-400">{percentage}% / {shift.match(/\(([^)]+)\)/)[1]}</div>
                   </div>
                 );
               })}
@@ -5355,7 +5355,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
           {/* KATEGORİ BAZLI İSTATİSTİKLER */}
           {Object.keys(todayDetailedStats.categoryBreakdown).length > 0 && (
-            <div className="bg-slate-900/50 p-4 rounded-lg mb-4 border border-slate-700">
+            <div className="bg-zinc-900/50 p-4 rounded-lg mb-4 border border-zinc-700">
               <div className="flex items-center gap-2 mb-3">
                 <PieChart className="text-green-400" size={18} />
                 <h3 className="text-sm font-bold text-green-300">Kategori Dağılımı (Girişler)</h3>
@@ -5368,14 +5368,14 @@ const sendDailyReport = useCallback((dateParam) => {
                     const percentage = Math.round((count / total) * 100);
 
                     return (
-                      <div key={category} className="bg-slate-800 p-2 rounded border border-slate-700 hover:border-slate-500 transition-colors group">
+                      <div key={category} className="bg-zinc-800 p-2 rounded border border-zinc-700 hover:border-zinc-500 transition-colors group">
                         <div className="flex items-center justify-between mb-1">
                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${getCategoryStyle(category)}`}>
                             {category.replace(' Aracı', '').replace('Fabrika Personeli', 'Personel')}
                           </span>
                           <span className="text-lg font-bold text-white group-hover:scale-110 transition-transform">{count}</span>
                         </div>
-                        <div className="text-[9px] text-slate-400">%{percentage}</div>
+                        <div className="text-[9px] text-zinc-400">%{percentage}</div>
                       </div>
                     );
                   })}
@@ -5422,7 +5422,7 @@ const sendDailyReport = useCallback((dateParam) => {
           )}
 
           {/* FİLTRELEME VE AYARLAR */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4 pb-3 border-b border-slate-700">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4 pb-3 border-b border-zinc-700">
             <div className="flex gap-2 flex-wrap">
               <Button
                 onClick={() => { setTodayPageFilter('all'); setTodayCurrentPage(1); }}
@@ -5481,7 +5481,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {/* TABLO */}
           <div className="flex-1 ui-table-wrap">
             <table className="ui-table">
-              <thead className="bg-gradient-to-r from-slate-900 to-slate-800 text-slate-200 sticky top-0 shadow-lg">
+              <thead className="bg-gradient-to-r from-zinc-900 to-zinc-800 text-zinc-200 sticky top-0 shadow-lg">
                 <tr>
                   <TableHeadCell
                     icon={<Clock size={14} className="text-blue-400" />}
@@ -5518,7 +5518,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700">
+              <tbody className="divide-y divide-zinc-700">
                 {(() => {
                   const oneHourAgoMs = Date.now() - 60 * 60 * 1000;
                   const {
@@ -5543,7 +5543,7 @@ const sendDailyReport = useCallback((dateParam) => {
                         return (
                           <tr
                             key={`${log.id}-${log.direction}`}
-                            className={`hover:bg-slate-700/50 transition-all ${isEntry ? 'bg-green-900/5' : 'bg-red-900/5'} ${isRecent ? 'border-l-4 border-l-blue-500 bg-blue-900/10 animate-in fade-in slide-in-from-left-2' : ''}`}
+                            className={`hover:bg-zinc-700/50 transition-all ${isEntry ? 'bg-green-900/5' : 'bg-red-900/5'} ${isRecent ? 'border-l-4 border-l-blue-500 bg-blue-900/10 animate-in fade-in slide-in-from-left-2' : ''}`}
                           >
                             <td className="p-3">
                               <div className="flex items-center gap-2">
@@ -5575,7 +5575,7 @@ const sendDailyReport = useCallback((dateParam) => {
                             </td>
                             <td className="p-3 font-bold text-white">
                               <div>{identifier}</div>
-                              {log.driver && <div className="text-xs text-slate-400 font-normal">{log.driver}</div>}
+                              {log.driver && <div className="text-xs text-zinc-400 font-normal">{log.driver}</div>}
                               {isAmbiguousInside && (
                                 <div className="text-[10px] text-yellow-300 font-bold mt-1">BELİRSİZ DURUM</div>
                               )}
@@ -5647,7 +5647,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                 {/* SİL BUTONU */}
                                 <button
                                   onClick={() => handleDelete(log.id)}
-                                  className="px-2 py-1.5 rounded bg-slate-800 hover:bg-red-900 text-red-500 hover:text-red-300 transition-colors"
+                                  className="px-2 py-1.5 rounded bg-zinc-800 hover:bg-red-900 text-red-500 hover:text-red-300 transition-colors"
                                   title="Kaydı Sil"
                                 >
                                   <Trash2 size={14} />
@@ -5661,13 +5661,13 @@ const sendDailyReport = useCallback((dateParam) => {
                         <tr>
                           <td colSpan={5} className="ui-empty">
                             <div className="flex flex-col items-center gap-2">
-                              <Search size={28} className="text-slate-600" />
-                              <div className="font-semibold text-slate-300">
+                              <Search size={28} className="text-zinc-600" />
+                              <div className="font-semibold text-zinc-300">
                                 {debouncedActiveSearchTerm || todayPageFilter !== 'all' || todayCategoryFilter
                                   ? 'Filtreye uygun kayıt bulunamadı.'
                                   : 'Bugün henüz kayıt bulunmuyor.'}
                               </div>
-                              <div className="text-xs text-slate-500">
+                              <div className="text-xs text-zinc-500">
                                 {debouncedActiveSearchTerm || todayPageFilter !== 'all' || todayCategoryFilter
                                   ? 'Filtreleri değiştirmeyi deneyin.'
                                   : 'Giriş/çıkış kaydı eklendiğinde burada görünecek.'}
@@ -5680,10 +5680,10 @@ const sendDailyReport = useCallback((dateParam) => {
                       {totalPages > 1 && (
                         <tr>
                           <td colSpan={5} className="p-0">
-                            <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-4 border-t border-slate-700">
+                            <div className="bg-gradient-to-r from-zinc-900 to-zinc-800 p-4 border-t border-zinc-700">
                               <div className="flex flex-col md:flex-row items-center justify-between gap-3">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-xs text-slate-400 bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">
+                                  <span className="text-xs text-zinc-400 bg-zinc-800 px-3 py-1.5 rounded-lg border border-zinc-700">
                                     {totalRows} kayıttan <span className="font-bold text-blue-400">{startIndex + 1}-{Math.min(endIndex, totalRows)}</span> arası
                                   </span>
                                 </div>
@@ -5692,7 +5692,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                   <button
                                     onClick={() => setTodayCurrentPage(1)}
                                     disabled={todayCurrentPage === 1}
-                                    className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                    className="px-3 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                                     title="İlk Sayfa"
                                   >
                                     İlk
@@ -5700,7 +5700,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                   <button
                                     onClick={() => setTodayCurrentPage(prev => Math.max(1, prev - 1))}
                                     disabled={todayCurrentPage === 1}
-                                    className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                                    className="px-4 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1"
                                   >
                                     Önceki
                                   </button>
@@ -5724,7 +5724,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                           onClick={() => setTodayCurrentPage(pageNum)}
                                           className={`px-3 py-2 rounded-lg text-xs font-bold transition-all ${todayCurrentPage === pageNum
                                             ? 'bg-blue-600 text-white scale-110 shadow-lg'
-                                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                            : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
                                             }`}
                                         >
                                           {pageNum}
@@ -5733,10 +5733,10 @@ const sendDailyReport = useCallback((dateParam) => {
                                     })}
                                     {totalPages > 5 && todayCurrentPage < totalPages - 2 && (
                                       <>
-                                        <span className="text-slate-500 px-2">...</span>
+                                        <span className="text-zinc-500 px-2">...</span>
                                         <button
                                           onClick={() => setTodayCurrentPage(totalPages)}
-                                          className="px-3 py-2 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600 text-xs font-bold transition-all"
+                                          className="px-3 py-2 rounded-lg bg-zinc-700 text-zinc-300 hover:bg-zinc-600 text-xs font-bold transition-all"
                                         >
                                           {totalPages}
                                         </button>
@@ -5747,21 +5747,21 @@ const sendDailyReport = useCallback((dateParam) => {
                                   <button
                                     onClick={() => setTodayCurrentPage(prev => Math.min(totalPages, prev + 1))}
                                     disabled={todayCurrentPage === totalPages}
-                                    className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                                    className="px-4 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1"
                                   >
                                     Sonraki
                                   </button>
                                   <button
                                     onClick={() => setTodayCurrentPage(totalPages)}
                                     disabled={todayCurrentPage === totalPages}
-                                    className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                    className="px-3 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                                     title="Son Sayfa"
                                   >
                                     Son
                                   </button>
                                 </div>
 
-                                <div className="text-xs text-slate-400 bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">
+                                <div className="text-xs text-zinc-400 bg-zinc-800 px-3 py-1.5 rounded-lg border border-zinc-700">
                                   Sayfa <span className="font-bold text-blue-400">{todayCurrentPage}</span> / {totalPages}
                                 </div>
                               </div>
@@ -5796,60 +5796,60 @@ const sendDailyReport = useCallback((dateParam) => {
             {advancedReportEnabled && (
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Toplam (Filtreli)</div>
+                  <div className="text-xs text-zinc-400">Toplam (Filtreli)</div>
                   <div className="text-2xl font-bold">{advancedReport.total}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Iceride</div>
+                  <div className="text-xs text-zinc-400">Iceride</div>
                   <div className="text-2xl font-bold text-green-300">{advancedReport.insideCount}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Cikis Yapan</div>
-                  <div className="text-2xl font-bold text-slate-200">{advancedReport.exitedCount}</div>
+                  <div className="text-xs text-zinc-400">Cikis Yapan</div>
+                  <div className="text-2xl font-bold text-zinc-200">{advancedReport.exitedCount}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-slate-400">Ort. Kalis</div>
+                  <div className="text-xs text-zinc-400">Ort. Kalis</div>
                   <div className="text-2xl font-bold text-blue-300">{advancedReport.avgStayMins} dk</div>
                 </div>
                 <div className="ui-panel md:col-span-2">
-                  <div className="text-xs text-slate-400 mb-2">Top Birimler</div>
+                  <div className="text-xs text-zinc-400 mb-2">Top Birimler</div>
                   <div className="space-y-1">
                     {advancedReport.topHosts.map((item) => (
                       <div key={item.label} className="flex justify-between text-xs">
                         <span className="truncate pr-2">{item.label}</span>
-                        <span className="text-slate-300">{item.count}</span>
+                        <span className="text-zinc-300">{item.count}</span>
                       </div>
                     ))}
-                    {advancedReport.topHosts.length === 0 && <div className="text-xs text-slate-500">Veri yok.</div>}
+                    {advancedReport.topHosts.length === 0 && <div className="text-xs text-zinc-500">Veri yok.</div>}
                   </div>
                 </div>
                 <div className="ui-panel md:col-span-2">
-                  <div className="text-xs text-slate-400 mb-2">Saatlik Yogunluk</div>
+                  <div className="text-xs text-zinc-400 mb-2">Saatlik Yogunluk</div>
                   <div className="grid grid-cols-12 gap-1 items-end h-16">
                     {advancedReport.hourly.map((h) => {
                       const max = Math.max(1, ...advancedReport.hourly.map((x) => x.count || 0));
                       const pct = Math.max(6, Math.round((100 * h.count) / max));
                       return (
-                        <div key={h.hour} className="bg-slate-800 rounded-sm relative" style={{ height: `${pct}%` }} title={`${String(h.hour).padStart(2, '0')}:00 -> ${h.count}`} />
+                        <div key={h.hour} className="bg-zinc-800 rounded-sm relative" style={{ height: `${pct}%` }} title={`${String(h.hour).padStart(2, '0')}:00 -> ${h.count}`} />
                       );
                     })}
                   </div>
-                  <div className="text-[10px] text-slate-500 mt-2">
+                  <div className="text-[10px] text-zinc-500 mt-2">
                     En yogun saat: {String(advancedReport.busiestHour.hour).padStart(2, '0')}:00 ({advancedReport.busiestHour.count})
                   </div>
                 </div>
               </div>
             )}
             <div className="ui-panel flex flex-wrap gap-3">
-              <div className="flex items-center gap-2"><Filter size={16} className="text-slate-400" /><span className="text-xs text-slate-400 font-bold">FİLTRELE:</span></div>
+              <div className="flex items-center gap-2"><Filter size={16} className="text-zinc-400" /><span className="text-xs text-zinc-400 font-bold">FİLTRELE:</span></div>
               <div className="relative flex-1 min-w-[180px] sm:min-w-[200px]">
-                <Search className="absolute left-3 top-2.5 text-slate-500" size={16} />
+                <Search className="absolute left-3 top-2.5 text-zinc-500" size={16} />
                 <Input type="text" placeholder="Plaka, İsim, TC, Telefon, Sürücü ara..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9 pr-3" />
               </div>
               <div className="flex items-center gap-2">
-                <Calendar size={16} className="text-slate-400" />
+                <Calendar size={16} className="text-zinc-400" />
                 <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-auto" />
-                <span className="text-slate-500">-</span>
+                <span className="text-zinc-500">-</span>
                 <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-auto" />
               </div>
               <Select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="w-auto min-w-[150px]">{CATEGORIES.map(cat => (<option key={cat.value} value={cat.value}>{cat.label}</option>))}</Select>
@@ -5861,7 +5861,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <X size={14} /> Temizle
                 </Button>
               )}
-              <span className="text-xs text-slate-500 self-center ml-auto">
+              <span className="text-xs text-zinc-500 self-center ml-auto">
                 {reportTableState.isTruncated
                   ? `${filteredLogs.length} kayit (ilk ${reportRenderLimit})`
                   : `${filteredLogs.length} kayit`}
@@ -5905,7 +5905,7 @@ const sendDailyReport = useCallback((dateParam) => {
             </div>
             </>
             ) : (
-              <div className="ui-panel text-sm text-slate-400">
+              <div className="ui-panel text-sm text-zinc-400">
                 Geçmiş kayıt listesi gizli. İsterseniz "Geçmişi Göster" ile açabilirsiniz.
               </div>
             )}
@@ -5914,7 +5914,7 @@ const sendDailyReport = useCallback((dateParam) => {
           <>
           <div className="ui-table-wrap max-h-[400px]">
             <table className="ui-table" id="raporTablosu">
-              <thead className="bg-slate-900 text-slate-200 sticky top-0 z-10">
+              <thead className="bg-zinc-900 text-zinc-200 sticky top-0 z-10">
                 <tr>
                   <TableHeadCell
                     label="Tarih"
@@ -5965,7 +5965,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <TableHeadCell label="İşlem" align="right" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700">
+              <tbody className="divide-y divide-zinc-700">
                 {reportTableState.rows.map(log => {
                   const isInside = !log.exit_at;
                   const identifier = log.plate || log.name;
@@ -5974,14 +5974,14 @@ const sendDailyReport = useCallback((dateParam) => {
                   const isAlreadyInside = isIdentifierInside(log);
 
                   return (
-                    <tr key={log.id} className={`hover:bg-slate-700/30 ${isInside ? 'bg-green-900/10' : ''}`}>
+                    <tr key={log.id} className={`hover:bg-zinc-700/30 ${isInside ? 'bg-green-900/10' : ''}`}>
                       <td className="p-3 text-xs">{new Date(log.created_at).toLocaleDateString('tr-TR')}</td>
                       <td className="p-3 text-xs font-mono text-orange-300">{log.shift?.split(' ')[0]}</td>
                       <td className="p-3 text-xs"><span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${getCategoryStyle(log.sub_category)}`}>{log.sub_category?.replace(' Aracı', '')}</span></td>
                       <td className="p-3 font-bold text-white">{identifier}</td>
-                      <td className="p-3 text-xs text-slate-300">{log.driver || '-'}</td>
+                      <td className="p-3 text-xs text-zinc-300">{log.driver || '-'}</td>
                       <td className="p-3 text-xs"><div>{log.host}</div>{formatLogLocation(log) && <div className="text-blue-400">Lokasyon: {formatLogLocation(log)}</div>}</td>
-                      <td className="p-3 text-xs text-slate-400 max-w-[150px] truncate" title={log.note}>{log.note || '-'}</td>
+                      <td className="p-3 text-xs text-zinc-400 max-w-[150px] truncate" title={log.note}>{log.note || '-'}</td>
                       <td className="p-3 font-mono text-xs text-green-400">{new Date(log.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</td>
                       <td className="p-3 font-mono text-xs text-red-400">{log.exit_at ? new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                       {optionalAttachmentsEnabled && (
@@ -5998,8 +5998,8 @@ const sendDailyReport = useCallback((dateParam) => {
                         <div className="flex gap-1 justify-end">
                           {isInside && (<button onClick={() => handleQuickExit(log)} disabled={actionLoading === log.id} className="text-red-400 hover:text-white p-2 bg-red-900/50 rounded hover:bg-red-600 transition text-xs font-bold flex items-center gap-1" title="Çıkış Yap"><LogOut size={14} /></button>)}
                           {!isInside && !isAlreadyInside && (<button onClick={() => handleReEntry(log)} disabled={actionLoading === log.id || loading} className="text-green-400 hover:text-white p-2 bg-green-900/50 rounded hover:bg-green-600 transition text-xs font-bold flex items-center gap-1" title="Tekrar Giriş Yap"><RotateCcw size={14} /></button>)}
-                          <button onClick={() => { setEditingLog(log); setEditForm({ ...log, entry_location: getEntryLocation(log), exit_location: getExitLocation(log) }); }} className="text-blue-400 hover:text-blue-300 p-2 bg-slate-900 rounded hover:bg-slate-700 transition"><Edit size={14} /></button>
-                          <button onClick={() => handleDelete(log.id)} className="text-red-400 hover:text-red-300 p-2 bg-slate-900 rounded hover:bg-red-900/50 transition"><Trash2 size={14} /></button>
+                          <button onClick={() => { setEditingLog(log); setEditForm({ ...log, entry_location: getEntryLocation(log), exit_location: getExitLocation(log) }); }} className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"><Edit size={14} /></button>
+                          <button onClick={() => handleDelete(log.id)} className="text-red-400 hover:text-red-300 p-2 bg-zinc-900 rounded hover:bg-red-900/50 transition"><Trash2 size={14} /></button>
                         </div>
                       </td>
                     </tr>
@@ -6009,9 +6009,9 @@ const sendDailyReport = useCallback((dateParam) => {
                   <tr>
                     <td colSpan={optionalAttachmentsEnabled ? 12 : 11} className="ui-empty">
                       <div className="flex flex-col items-center gap-2">
-                        <Filter size={28} className="text-slate-600" />
-                        <div className="font-semibold text-slate-200">Kayıt bulunamadı</div>
-                        <div className="text-xs text-slate-500">Filtreleri temizleyip tekrar deneyin.</div>
+                        <Filter size={28} className="text-zinc-600" />
+                        <div className="font-semibold text-zinc-200">Kayıt bulunamadı</div>
+                        <div className="text-xs text-zinc-500">Filtreleri temizleyip tekrar deneyin.</div>
                       </div>
                     </td>
                   </tr>
@@ -6020,7 +6020,7 @@ const sendDailyReport = useCallback((dateParam) => {
             </table>
           </div>
           {reportTableState.totalRows > 0 && (
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400">
               <span>
                 {`${reportTableState.startIndex + 1}-${reportTableState.endIndex} / ${reportTableState.totalRows}`}
                 {reportTableState.isTruncated ? ` (filtrelenen toplam: ${reportTableState.sourceTotal})` : ''}
@@ -6030,7 +6030,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   type="button"
                   onClick={() => setReportCurrentPage(1)}
                   disabled={reportTableState.safePage <= 1}
-                  className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 disabled:opacity-40 transition-colors text-xs font-medium"
+                  className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-40 transition-colors text-xs font-medium"
                 >
                   İlk
                 </button>
@@ -6038,7 +6038,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   type="button"
                   onClick={() => setReportCurrentPage((prev) => Math.max(1, prev - 1))}
                   disabled={reportTableState.safePage <= 1}
-                  className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 disabled:opacity-40 transition-colors text-xs font-medium"
+                  className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-40 transition-colors text-xs font-medium"
                 >
                   Geri
                 </button>
@@ -6049,7 +6049,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   type="button"
                   onClick={() => setReportCurrentPage((prev) => Math.min(reportTableState.totalPages, prev + 1))}
                   disabled={reportTableState.safePage >= reportTableState.totalPages}
-                  className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 disabled:opacity-40 transition-colors text-xs font-medium"
+                  className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-40 transition-colors text-xs font-medium"
                 >
                   İleri
                 </button>
@@ -6057,7 +6057,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   type="button"
                   onClick={() => setReportCurrentPage(reportTableState.totalPages)}
                   disabled={reportTableState.safePage >= reportTableState.totalPages}
-                  className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 disabled:opacity-40 transition-colors text-xs font-medium"
+                  className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-40 transition-colors text-xs font-medium"
                 >
                   Son
                 </button>
@@ -6088,10 +6088,10 @@ const sendDailyReport = useCallback((dateParam) => {
 
       {optionalAttachmentsEnabled && (
         <Modal isOpen={!!attachmentModalLog} onClose={() => setAttachmentModalLog(null)} title="Kayıt Ekleri" size="lg">
-          <div className="text-xs text-slate-400 -mt-2 mb-3">{attachmentModalLog?.plate || attachmentModalLog?.name || '-'} | {new Date(attachmentModalLog?.created_at || Date.now()).toLocaleString('tr-TR')}</div>
+          <div className="text-xs text-zinc-400 -mt-2 mb-3">{attachmentModalLog?.plate || attachmentModalLog?.name || '-'} | {new Date(attachmentModalLog?.created_at || Date.now()).toLocaleString('tr-TR')}</div>
 
           <div className="ui-panel mb-3">
-            <div className="text-xs text-slate-400 mb-2">Yeni dosya ekle</div>
+            <div className="text-xs text-zinc-400 mb-2">Yeni dosya ekle</div>
             <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" onChange={handleAttachmentModalSelect} className="ui-input" />
           </div>
 
@@ -6100,7 +6100,7 @@ const sendDailyReport = useCallback((dateParam) => {
               <div key={item.id} className="ui-panel flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-sm truncate">{item.name}</div>
-                  <div className="text-[11px] text-slate-500">{humanFileSize(item.size)} | {item.type || '-'}</div>
+                  <div className="text-[11px] text-zinc-500">{humanFileSize(item.size)} | {item.type || '-'}</div>
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="secondary" onClick={() => downloadDataUrl(item.name, item.dataUrl)}>İndir</Button>
@@ -6109,14 +6109,14 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
             ))}
             {(attachmentModalLog ? getAttachmentsForLog(attachmentModalLog) : []).length === 0 && (
-              <div className="text-sm text-slate-500">Bu kayıt için ek dosya yok.</div>
+              <div className="text-sm text-zinc-500">Bu kayıt için ek dosya yok.</div>
             )}
           </div>
         </Modal>
       )}
 
       <Modal isOpen={exitSealModalOpen} onClose={() => { setExitSealModalOpen(false); setExitingLogData(null); }} title={<span className="flex gap-2 items-center"><Lock className="text-red-500" /> Araç Çıkış Mühürü</span>} size="sm" className="border-red-500">
-        <p className="text-slate-300 text-sm mb-2">Lütfen çıkış yapan mühürlü araç için <strong className="text-red-400">ÇIKIŞ MÜHÜR</strong> numarasını giriniz.</p>
+        <p className="text-zinc-300 text-sm mb-2">Lütfen çıkış yapan mühürlü araç için <strong className="text-red-400">ÇIKIŞ MÜHÜR</strong> numarasını giriniz.</p>
         {exitingLogData?.seal_number_entry && (<div className="bg-green-900/30 border border-green-500/50 p-2 rounded mb-4"><p className="text-green-300 text-sm">Giriş Mührü: <strong className="text-white">{exitingLogData.seal_number_entry}</strong></p></div>)}
         <Input type="text" autoFocus placeholder="Çıkış Mühür No Giriniz..." value={exitSealNumber} onChange={(e) => setExitSealNumber(e.target.value)} className="border-red-500/50 focus:border-red-500 mb-4 font-bold text-lg" />
         <div className="flex gap-3">
@@ -6129,14 +6129,14 @@ const sendDailyReport = useCallback((dateParam) => {
         <Modal isOpen={!!editingLog} onClose={() => setEditingLog(null)} title={<span className="flex gap-2 items-center"><Edit className="text-blue-500" /> Kaydı Düzenle</span>} size="lg">
           <div className="mb-4">
             <FormField label="DURUM">
-            <div className="flex bg-slate-900 rounded p-1">
-              <button onClick={() => setEditForm({ ...editForm, exit_at: null })} className={cx('flex-1 py-3 rounded font-bold text-sm transition-all', !editForm.exit_at ? 'bg-green-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800')}>İÇERİDE</button>
-              <button onClick={() => setEditForm({ ...editForm, exit_at: editForm.exit_at || new Date().toISOString() })} className={cx('flex-1 py-3 rounded font-bold text-sm transition-all', editForm.exit_at ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800')}>DIŞARIDA</button>
+            <div className="flex bg-zinc-900 rounded p-1">
+              <button onClick={() => setEditForm({ ...editForm, exit_at: null })} className={cx('flex-1 py-3 rounded font-bold text-sm transition-all', !editForm.exit_at ? 'bg-green-600 text-white shadow-lg' : 'text-zinc-400 hover:text-white hover:bg-zinc-800')}>İÇERİDE</button>
+              <button onClick={() => setEditForm({ ...editForm, exit_at: editForm.exit_at || new Date().toISOString() })} className={cx('flex-1 py-3 rounded font-bold text-sm transition-all', editForm.exit_at ? 'bg-red-600 text-white shadow-lg' : 'text-zinc-400 hover:text-white hover:bg-zinc-800')}>DIŞARIDA</button>
             </div>
             </FormField>
           </div>
           <div className="grid grid-cols-2 gap-4 mb-4">
-            <div className="col-span-2 bg-slate-900/50 p-3 rounded border border-slate-700 mb-2">
+            <div className="col-span-2 bg-zinc-900/50 p-3 rounded border border-zinc-700 mb-2">
               <div className="text-xs font-bold text-orange-400 mb-2 flex items-center gap-1"><CalendarClock size={14} /> ZAMAN DÜZENLEME</div>
               <div className="grid grid-cols-2 gap-4">
                 <FormField label="GİRİŞ SAATİ"><Input type="datetime-local" value={formatForInput(editForm.created_at)} onChange={(e) => setEditForm({ ...editForm, created_at: new Date(e.target.value).toISOString() })} className="text-xs" /></FormField>
