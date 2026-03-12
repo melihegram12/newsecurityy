@@ -132,7 +132,11 @@ export const safeDate = (value) => {
 
 export const toDateOnly = (value) => {
   const d = safeDate(value);
-  return d ? d.toISOString().split('T')[0] : null;
+  if (!d) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 };
 
 export const calculateWaitTime = (createdAt) => {
@@ -292,7 +296,12 @@ export const areLogListsEqual = (a, b) => {
   if (a === b) return true;
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
   if (a.length !== b.length) return false;
-  return a.every((log, i) => log === b[i]);
+  return a.every((log, i) => {
+    const other = b[i];
+    if (log === other) return true;
+    if (!log || !other) return false;
+    return log.id === other.id && log.exit_at === other.exit_at && log.updated_at === other.updated_at;
+  });
 };
 
 export const upsertLogInList = (list, log) => {

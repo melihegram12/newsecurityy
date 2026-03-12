@@ -368,12 +368,17 @@ function resultToObjects(result) {
 
 // Tüm aktif kayıtları getir (çıkış yapmamış)
 function getActiveLogs() {
-  const result = db.exec(`
-    SELECT * FROM security_logs 
-    WHERE exit_at IS NULL 
+  const stmt = db.prepare(`
+    SELECT * FROM security_logs
+    WHERE exit_at IS NULL
     ORDER BY created_at DESC
   `);
-  return resultToObjects(result);
+  const logs = [];
+  while (stmt.step()) {
+    logs.push(stmt.getAsObject());
+  }
+  stmt.free();
+  return logs;
 }
 
 // Tüm kayıtları getir (limit ile)

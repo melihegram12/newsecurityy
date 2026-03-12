@@ -1852,7 +1852,7 @@ export default function App() {
 
   // ── Dashboard kart tıklama → geçmişi aç + filtrele ──
   const handleCardClick = useCallback((cardType) => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = toDateOnly(new Date());
     setSearchTerm(''); setCategoryFilter(''); setShiftFilter('');
     setHostFilter(''); setLocationFilter(''); setSealFilter('');
     setTypeFilter('all'); setShowAdvancedFilters(false);
@@ -2569,7 +2569,7 @@ const sendDailyReport = useCallback((dateParam) => {
   ), [allLogs, liteMode]);
 
   const todayAllLogs = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = toDateOnly(new Date());
     const movements = [];
     const todayLogs = analyticsLogs.filter(log => toDateOnly(log.created_at) === today);
 
@@ -2725,7 +2725,7 @@ const sendDailyReport = useCallback((dateParam) => {
     const completedToday = analyticsLogs.filter(log => {
       const entryDate = toDateOnly(log.created_at);
       const exitDate = log.exit_at ? toDateOnly(log.exit_at) : null;
-      const today = new Date().toISOString().split('T')[0];
+      const today = toDateOnly(new Date());
       return entryDate === today && exitDate === today && log.exit_at;
     });
 
@@ -2779,7 +2779,7 @@ const sendDailyReport = useCallback((dateParam) => {
   }, [analyticsLogs]);
 
   const stats = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = toDateOnly(new Date());
     const todayLogs = analyticsLogs.filter(log => toDateOnly(log.created_at) === today);
     const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
     const weekLogs = analyticsLogs.filter(log => new Date(log.created_at) >= weekAgo);
@@ -5391,7 +5391,7 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
               <button
                 onClick={() => {
-                  const today = new Date().toISOString().split('T')[0];
+                  const today = toDateOnly(new Date());
                   const todayData = todayAllLogs.map(log => ({
                     Tarih: new Date(log.time).toLocaleDateString('tr-TR'),
                     Saat: new Date(log.time).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
