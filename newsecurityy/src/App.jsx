@@ -1807,6 +1807,73 @@ export default function App() {
     });
   }, [loading, actionLoading, activeLogs, currentShift, session, fetchData, showToast]);
 
+  // ── Gerçek filtreleme mantığı ──
+  const filteredLogs = useMemo(() => {
+    let result = allLogs;
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      result = result.filter(log =>
+        (log.plate && log.plate.toLowerCase().includes(term)) ||
+        (log.name && log.name.toLowerCase().includes(term)) ||
+        (log.tc_no && log.tc_no.includes(term)) ||
+        (log.phone && log.phone.includes(term)) ||
+        (log.driver && log.driver.toLowerCase().includes(term))
+      );
+    }
+    if (dateFrom) result = result.filter(log => toDateOnly(log.created_at) >= dateFrom);
+    if (dateTo) result = result.filter(log => toDateOnly(log.created_at) <= dateTo);
+    if (categoryFilter) result = result.filter(log => log.sub_category === categoryFilter);
+    if (statusFilter === 'inside') result = result.filter(log => !log.exit_at);
+    else if (statusFilter === 'outside') result = result.filter(log => !!log.exit_at);
+    if (typeFilter === 'vehicle') result = result.filter(log => !!log.plate);
+    else if (typeFilter === 'visitor') result = result.filter(log => !log.plate);
+    if (shiftFilter) result = result.filter(log => log.shift === shiftFilter);
+    if (hostFilter) {
+      const hf = hostFilter.toLowerCase();
+      result = result.filter(log => log.host && log.host.toLowerCase().includes(hf));
+    }
+    if (locationFilter) {
+      const lf = locationFilter.toLowerCase();
+      result = result.filter(log =>
+        (getEntryLocation(log) && getEntryLocation(log).toLowerCase().includes(lf)) ||
+        (getExitLocation(log) && getExitLocation(log).toLowerCase().includes(lf)) ||
+        (log.location && log.location.toLowerCase().includes(lf))
+      );
+    }
+    if (sealFilter) {
+      const sf = sealFilter.toLowerCase();
+      result = result.filter(log =>
+        (log.seal_number_entry && log.seal_number_entry.toLowerCase().includes(sf)) ||
+        (log.seal_number_exit && log.seal_number_exit.toLowerCase().includes(sf))
+      );
+    }
+    return result;
+  }, [allLogs, searchTerm, dateFrom, dateTo, categoryFilter, statusFilter, typeFilter, shiftFilter, hostFilter, locationFilter, sealFilter]);
+
+  // ── Dashboard kart tıklama → geçmişi aç + filtrele ──
+  const handleCardClick = useCallback((cardType) => {
+    const today = new Date().toISOString().split('T')[0];
+    setSearchTerm(''); setCategoryFilter(''); setShiftFilter('');
+    setHostFilter(''); setLocationFilter(''); setSealFilter('');
+    setTypeFilter('all'); setShowAdvancedFilters(false);
+    if (cardType === 'entry') {
+      setDateFrom(today); setDateTo(today); setStatusFilter('all');
+    } else if (cardType === 'exit') {
+      setDateFrom(today); setDateTo(today); setStatusFilter('outside');
+      setShowAdvancedFilters(true);
+    } else if (cardType === 'inside') {
+      setDateFrom(''); setDateTo(''); setStatusFilter('inside');
+      setShowAdvancedFilters(true);
+    } else {
+      setDateFrom(today); setDateTo(today); setStatusFilter('all');
+    }
+    setReportCurrentPage(1);
+    setShowHistoryPanel(true);
+    setTimeout(() => {
+      document.getElementById('raporTablosu')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }, []);
+
   const exportToExcel = useCallback(() => {
     try {
       if (filteredLogs.length === 0) return showToast("Veri yok", "error");
@@ -1826,8 +1893,7 @@ export default function App() {
     } catch (error) {
       showToast("Excel oluşturma hatası!", "error");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showToast]);
+  }, [filteredLogs, showToast]);
 
 const sendDailyReport = useCallback((dateParam) => {
     setConfirmModal({
@@ -1906,8 +1972,6 @@ const sendDailyReport = useCallback((dateParam) => {
       }
     });
   }, [allLogs, showToast]);
-
-  const filteredLogs = useMemo(() => allLogs, [allLogs]);
 
   const hostOptions = useMemo(
     () => Array.from(new Set(filteredLogs.map((log) => log.host).filter(Boolean))),
@@ -5357,7 +5421,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
           {/* DETAYLI İSTATİSTİK KARTLARI */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <div className="bg-green-900/30 border border-green-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
+            <div onClick={() => handleCardClick('entry')} className="bg-green-900/30 border border-green-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm text-green-300 flex items-center gap-1 font-bold">
                   <ArrowRightCircle size={16} /> Giriş
@@ -5369,7 +5433,7 @@ const sendDailyReport = useCallback((dateParam) => {
               <div className="text-[10px] text-green-300/60">Bugün Toplam</div>
             </div>
 
-            <div className="bg-red-900/30 border border-red-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
+            <div onClick={() => handleCardClick('exit')} className="bg-red-900/30 border border-red-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm text-red-300 flex items-center gap-1 font-bold">
                   <ArrowLeftCircle size={16} /> Çıkış
@@ -5381,7 +5445,7 @@ const sendDailyReport = useCallback((dateParam) => {
               <div className="text-[10px] text-red-300/60">Bugün Toplam</div>
             </div>
 
-            <div className="bg-orange-900/30 border border-orange-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
+            <div onClick={() => handleCardClick('inside')} className="bg-orange-900/30 border border-orange-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm text-orange-300 flex items-center gap-1 font-bold">
                   <Activity size={16} /> İçeride
@@ -5391,7 +5455,7 @@ const sendDailyReport = useCallback((dateParam) => {
               <div className="text-[10px] text-orange-300/60">Şu Anda Aktif</div>
             </div>
 
-            <div className="bg-purple-900/30 border border-purple-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
+            <div onClick={() => handleCardClick('avgDuration')} className="bg-purple-900/30 border border-purple-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm text-purple-300 flex items-center gap-1 font-bold">
                   <Timer size={16} /> Ort. Süre
@@ -5871,7 +5935,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 <Button onClick={() => setShowHistoryPanel((prev) => !prev)} variant="secondary" className="gap-2">
                   {showHistoryPanel ? 'Geçmişi Gizle' : 'Geçmişi Göster'}
                 </Button>
-                <Button onClick={exportToExcel} variant="secondary" className="gap-2" disabled={!showHistoryPanel}>
+                <Button onClick={exportToExcel} variant="secondary" className="gap-2">
                   Excel <CheckCircle size={14} />
                 </Button>
               </div>
