@@ -2,6 +2,7 @@
 import { supabase } from './supabaseClient';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
+const isMobile = typeof window !== 'undefined' && !!window.Capacitor && !isElectron;
 
 // Supabase senkronizasyon kuyruğu için key
 const SYNC_QUEUE_KEY = 'supabase_sync_queue';
@@ -1294,5 +1295,5 @@ function getSyncStatus() {
     return status;
 }
 
-export { db, isElectron, syncToSupabase, processSyncQueue, processLocalSyncQueue, syncFromSupabase, syncFromLocalApi, exportLocalLogsToSupabase, getSyncStatus, webDB };
+export { db, isElectron, isMobile, syncToSupabase, processSyncQueue, processLocalSyncQueue, syncFromSupabase, syncFromLocalApi, exportLocalLogsToSupabase, getSyncStatus, webDB };
 export default db;

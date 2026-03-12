@@ -6,7 +6,7 @@ import {
   CalendarClock, Mail, Volume2, VolumeX, Zap, Star, Send, RotateCcw, Folder, Upload
 } from 'lucide-react';
 import { supabase, supabaseUrl } from './supabaseClient';
-import { db as dbClient, isElectron, processSyncQueue, processLocalSyncQueue, syncFromSupabase, syncFromLocalApi, exportLocalLogsToSupabase, getSyncStatus } from './dbClient';
+import { db as dbClient, isElectron, isMobile, processSyncQueue, processLocalSyncQueue, syncFromSupabase, syncFromLocalApi, exportLocalLogsToSupabase, getSyncStatus } from './dbClient';
 import * as XLSX from 'xlsx';
 
 // --- MODÜLER İMPORTLAR ---
@@ -165,7 +165,7 @@ export default function App() {
   const [updateUrl, setUpdateUrl] = useState('');
   const [effectiveUpdateUrl, setEffectiveUpdateUrl] = useState('');
   const effectiveLocalApiUrl = localApiUrl?.trim() ? localApiUrl.trim() : LOCAL_API_DEFAULT_URL;
-  const canUseLocalApi = LOCAL_SYNC_ENABLED && Boolean(effectiveLocalApiUrl);
+  const canUseLocalApi = LOCAL_SYNC_ENABLED && Boolean(effectiveLocalApiUrl) && !isMobile;
   const localApiHeaders = useMemo(() => {
     const headers = { 'Content-Type': 'application/json' };
     if (localApiKey?.trim()) headers['X-Api-Key'] = localApiKey.trim();
@@ -736,8 +736,8 @@ export default function App() {
     setAuthLoading(true);
     try {
       const base = (effectiveLocalApiUrl || '').replace(/\/$/, '');
-      if (!base) {
-        completeFallbackLogin('local-api-disabled');
+      if (!base || isMobile) {
+        completeFallbackLogin(isMobile ? 'mobile-supabase-direct' : 'local-api-disabled');
         return;
       }
 
@@ -1130,12 +1130,16 @@ export default function App() {
     try {
       const queue = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
       const resolvedLocalId = localId || data?.created_at || null;
-      if (action === 'INSERT' && resolvedLocalId) {
-        const alreadyQueued = queue.some((item) => (
-          (item?.action || 'INSERT') === 'INSERT'
-          && (item?.localId || item?.data?.created_at || null) === resolvedLocalId
-        ));
-        if (alreadyQueued) {
+      if (resolvedLocalId || id) {
+        const matchKey = id || resolvedLocalId;
+        const idx = queue.findIndex((item) => {
+          const itemKey = item?.id || item?.localId || item?.data?.created_at || null;
+          return item?.action === action && itemKey === matchKey;
+        });
+        if (idx !== -1) {
+          if (action === 'INSERT') { checkPendingData(); return; }
+          queue[idx] = { action, data, id, localId: resolvedLocalId, _offlineTimestamp: Date.now() };
+          localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
           checkPendingData();
           return;
         }
@@ -1227,7 +1231,7 @@ export default function App() {
           let error = null;
 
           if (action === 'INSERT' && cleanData) {
-            const { error: e } = await supabase.from('security_logs').insert([pickSupabaseCompatibleLog(cleanData)]);
+            const { error: e } = await supabase.from('security_logs').upsert([pickSupabaseCompatibleLog(cleanData)], { onConflict: 'created_at' });
             error = e;
           } else if (action === 'UPDATE' && id && cleanData) {
             const { error: e } = await supabase.from('security_logs').update(pickSupabaseCompatibleLog(cleanData)).eq('id', id);
