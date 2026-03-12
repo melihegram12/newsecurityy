@@ -714,7 +714,7 @@ export default function App() {
       if (!resolvedRole) throw new Error('Kullanici adi taninmadi.');
       if (resolvedRole !== authRole) throw new Error('Secilen rol ile kullanici adi uyusmuyor.');
       const expectedPassword = ROLE_FALLBACK_PASSWORDS[authRole];
-      if (password !== expectedPassword) throw new Error('Kullanici adi veya sifre hatali.');
+      if (expectedPassword && password !== expectedPassword) throw new Error('Kullanici adi veya sifre hatali.');
 
       const user = buildFallbackSessionUser(authRole);
       setLocalApiToken('');
@@ -745,15 +745,19 @@ export default function App() {
       if (localApiKey?.trim()) headers['X-Api-Key'] = localApiKey.trim();
 
       try {
+        const loginCtrl = new AbortController();
+        const loginTimeout = setTimeout(() => loginCtrl.abort(), 8000);
         const res = await fetch(`${base}/auth/login`, {
           method: 'POST',
           headers,
+          signal: loginCtrl.signal,
           body: JSON.stringify({
             username,
             password,
             role: authRole,
           }),
         });
+        clearTimeout(loginTimeout);
         const payload = await res.json().catch(() => null);
         if (!res.ok) {
           let detail = payload?.detail || payload?.error || `HTTP ${res.status}`;
@@ -778,7 +782,7 @@ export default function App() {
         appendActionLog('auth.login', `${user.username || user.email} -> ${user.active_role || authRole}`);
       } catch (apiErr) {
         const apiMsg = apiErr?.message || String(apiErr);
-        if (/failed to fetch/i.test(apiMsg) || /networkerror/i.test(apiMsg) || /ecconn/i.test(apiMsg) || /refused/i.test(apiMsg) || /load failed/i.test(apiMsg)) {
+        if (apiErr?.name === 'AbortError' || /failed to fetch/i.test(apiMsg) || /networkerror/i.test(apiMsg) || /ecconn/i.test(apiMsg) || /refused/i.test(apiMsg) || /load failed/i.test(apiMsg)) {
           completeFallbackLogin('local-api-unreachable');
           return;
         }
@@ -3309,6 +3313,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 </Button>
               </div>
         </Modal>
+        <Toast notification={notification} onClose={closeToast} />
       </div>
     );
   }
