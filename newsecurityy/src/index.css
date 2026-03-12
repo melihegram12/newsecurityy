@@ -490,6 +490,19 @@ body::after {
   animation: none !important;
 }
 
+.lite-mode [class*="bg-gradient"] {
+  background-image: none !important;
+}
+
+.lite-mode [class*="hover:scale"],
+.lite-mode [class*="hover:bg-"] {
+  transform: none !important;
+}
+
+.lite-mode .rounded-xl {
+  border-radius: 0.375rem !important;
+}
+
 /* Scrollbar — amber-tinted */
 * {
   scrollbar-color: rgba(245, 158, 11, 0.3) rgba(8, 9, 14, 0.4);

@@ -1982,13 +1982,13 @@ const sendDailyReport = useCallback((dateParam) => {
   }, [allLogs, showToast]);
 
   const hostOptions = useMemo(
-    () => Array.from(new Set(filteredLogs.map((log) => log.host).filter(Boolean))),
-    [filteredLogs]
+    () => showHistoryPanel ? Array.from(new Set(filteredLogs.map((log) => log.host).filter(Boolean))) : [],
+    [filteredLogs, showHistoryPanel]
   );
 
   const locationOptions = useMemo(
-    () => Array.from(new Set(filteredLogs.flatMap((log) => [getEntryLocation(log), getExitLocation(log), log.location]).filter(Boolean))),
-    [filteredLogs]
+    () => showHistoryPanel ? Array.from(new Set(filteredLogs.flatMap((log) => [getEntryLocation(log), getExitLocation(log), log.location]).filter(Boolean))) : [],
+    [filteredLogs, showHistoryPanel]
   );
 
   const reportTableState = useMemo(() => {
@@ -2011,39 +2011,24 @@ const sendDailyReport = useCallback((dateParam) => {
     };
   }, [filteredLogs, reportRenderLimit, reportCurrentPage, reportPageSize]);
 
+  const _emptyAdvancedReport = { total: 0, insideCount: 0, exitedCount: 0, avgStayMins: 0, topHosts: [], hourly: [], busiestHour: { hour: 0, count: 0 } };
   const advancedReport = useMemo(() => {
+    if (liteMode || !advancedReportEnabled) return _emptyAdvancedReport;
     const total = filteredLogs.length;
-    const insideCount = filteredLogs.filter((log) => !log.exit_at).length;
-    const exitedCount = total - insideCount;
+    let insideCount = 0;
     const hourlyBase = Array.from({ length: 24 }, (_, hour) => ({ hour, count: 0 }));
-    filteredLogs.forEach((log) => {
-      const h = new Date(log.created_at || Date.now()).getHours();
-      if (hourlyBase[h]) hourlyBase[h].count += 1;
-    });
-    const busiestHour = hourlyBase.reduce(
-      (max, item) => (item.count > max.count ? item : max),
-      { hour: 0, count: 0 }
-    );
     const hostCount = {};
     filteredLogs.forEach((log) => {
+      if (!log.exit_at) insideCount++;
+      const h = new Date(log.created_at || Date.now()).getHours();
+      if (hourlyBase[h]) hourlyBase[h].count += 1;
       const key = (log.host || '-').trim();
-      if (!key) return;
-      hostCount[key] = (hostCount[key] || 0) + 1;
+      if (key) hostCount[key] = (hostCount[key] || 0) + 1;
     });
-    const topHosts = Object.entries(hostCount)
-      .map(([host, count]) => ({ host, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-    return {
-      total,
-      insideCount,
-      exitedCount,
-      avgStayMins: 0,
-      topHosts,
-      hourly: hourlyBase,
-      busiestHour,
-    };
-  }, [filteredLogs]);
+    const busiestHour = hourlyBase.reduce((max, item) => (item.count > max.count ? item : max), { hour: 0, count: 0 });
+    const topHosts = Object.entries(hostCount).map(([host, count]) => ({ host, count })).sort((a, b) => b.count - a.count).slice(0, 5);
+    return { total, insideCount, exitedCount: total - insideCount, avgStayMins: 0, topHosts, hourly: hourlyBase, busiestHour };
+  }, [filteredLogs, liteMode, advancedReportEnabled]);
 
   const filteredAuditLogs = useMemo(() => auditLogs, [auditLogs]);
 
@@ -2706,55 +2691,43 @@ const sendDailyReport = useCallback((dateParam) => {
   }, [todayCurrentPage, todayTableState.safePage]);
 
   // Bugünkü Hareketler için detaylı istatistikler
+  const _emptyDetailedStats = { recentCount: 0, recentEntries: 0, recentExits: 0, categoryBreakdown: {}, shiftBreakdown: { 'Vardiya 1 (08:00-16:00)': 0, 'Vardiya 2 (16:00-00:00)': 0, 'Vardiya 3 (00:00-08:00)': 0 }, avgWaitMinutes: 0, completedCount: 0 };
   const todayDetailedStats = useMemo(() => {
+    if (liteMode) return _emptyDetailedStats;
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const recentMovements = todayAllLogs.filter(log => new Date(log.time) >= oneHourAgo);
-
+    let recentEntries = 0, recentExits = 0;
     const categoryBreakdown = {};
-    todayAllLogs.forEach(log => {
+    const shiftBreakdown = { 'Vardiya 1 (08:00-16:00)': 0, 'Vardiya 2 (16:00-00:00)': 0, 'Vardiya 3 (00:00-08:00)': 0 };
+
+    // Single pass over todayAllLogs
+    for (const log of todayAllLogs) {
+      const isRecent = new Date(log.time) >= oneHourAgo;
       if (log.direction === 'entry') {
+        if (isRecent) recentEntries++;
         const cat = log.sub_category || 'Diğer';
         categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
+        if (log.shift) shiftBreakdown[log.shift] = (shiftBreakdown[log.shift] || 0) + 1;
+      } else if (isRecent) {
+        recentExits++;
       }
-    });
+    }
 
-    const shiftBreakdown = {
-      'Vardiya 1 (08:00-16:00)': 0,
-      'Vardiya 2 (16:00-00:00)': 0,
-      'Vardiya 3 (00:00-08:00)': 0
-    };
-    todayAllLogs.forEach(log => {
-      if (log.direction === 'entry' && log.shift) {
-        shiftBreakdown[log.shift] = (shiftBreakdown[log.shift] || 0) + 1;
+    const today = toDateOnly(new Date());
+    let totalMinutes = 0, completedCount = 0;
+    for (const log of analyticsLogs) {
+      if (log.exit_at && toDateOnly(log.created_at) === today && toDateOnly(log.exit_at) === today) {
+        totalMinutes += Math.floor((new Date(log.exit_at) - new Date(log.created_at)) / 60000);
+        completedCount++;
       }
-    });
-
-    // Ortalama bekleme süresi (içeride kalanlar için)
-    const completedToday = analyticsLogs.filter(log => {
-      const entryDate = toDateOnly(log.created_at);
-      const exitDate = log.exit_at ? toDateOnly(log.exit_at) : null;
-      const today = toDateOnly(new Date());
-      return entryDate === today && exitDate === today && log.exit_at;
-    });
-
-    let avgWaitMinutes = 0;
-    if (completedToday.length > 0) {
-      const totalMinutes = completedToday.reduce((sum, log) => {
-        return sum + Math.floor((new Date(log.exit_at) - new Date(log.created_at)) / 60000);
-      }, 0);
-      avgWaitMinutes = Math.floor(totalMinutes / completedToday.length);
     }
 
     return {
-      recentCount: recentMovements.length,
-      recentEntries: recentMovements.filter(l => l.direction === 'entry').length,
-      recentExits: recentMovements.filter(l => l.direction === 'exit').length,
-      categoryBreakdown,
-      shiftBreakdown,
-      avgWaitMinutes,
-      completedCount: completedToday.length
+      recentCount: recentEntries + recentExits, recentEntries, recentExits,
+      categoryBreakdown, shiftBreakdown,
+      avgWaitMinutes: completedCount > 0 ? Math.floor(totalMinutes / completedCount) : 0,
+      completedCount
     };
-  }, [todayAllLogs, analyticsLogs]);
+  }, [todayAllLogs, analyticsLogs, liteMode]);
 
   const longStayCount = useMemo(() => activeLogs.filter(log => calculateWaitTime(log.created_at).isLongStay).length, [activeLogs]);
   const activeVehicleCount = useMemo(() => activeLogs.filter((l) => l.type === 'vehicle').length, [activeLogs]);
@@ -2774,6 +2747,7 @@ const sendDailyReport = useCallback((dateParam) => {
   );
 
   const frequentVisitors = useMemo(() => {
+    if (liteMode) return [];
     const counts = {};
     analyticsLogs.forEach(log => {
       const key = log.plate || log.name;
@@ -2784,34 +2758,57 @@ const sendDailyReport = useCallback((dateParam) => {
       }
     });
     return Object.values(counts).filter(v => v.count >= 2).sort((a, b) => b.count - a.count).slice(0, 10);
-  }, [analyticsLogs]);
+  }, [analyticsLogs, liteMode]);
 
+  const _emptyStats = { today: 0, todayVehicle: 0, todayVisitor: 0, activeNow: 0, longStayCount: 0, week: 0, categoryStats: {}, shiftStats: {}, dailyStats: [], avgStayMins: 0 };
   const stats = useMemo(() => {
     const today = toDateOnly(new Date());
-    const todayLogs = analyticsLogs.filter(log => toDateOnly(log.created_at) === today);
     const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
-    const weekLogs = analyticsLogs.filter(log => new Date(log.created_at) >= weekAgo);
-    const categoryStats = {}; analyticsLogs.forEach(log => { categoryStats[log.sub_category] = (categoryStats[log.sub_category] || 0) + 1; });
-    const shiftStats = {}; todayLogs.forEach(log => { shiftStats[log.shift] = (shiftStats[log.shift] || 0) + 1; });
-    const dailyStats = [];
+
+    // Build daily date buckets once
+    const dailyBuckets = {};
+    const dailyLabels = [];
     for (let i = 6; i >= 0; i--) {
       const date = new Date(); date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
-      const count = analyticsLogs.filter(log => toDateOnly(log.created_at) === dateStr).length;
-      dailyStats.push({ date: date.toLocaleDateString('tr-TR', { weekday: 'short', day: 'numeric' }), count });
+      const dateStr = toDateOnly(date);
+      dailyBuckets[dateStr] = 0;
+      dailyLabels.push({ dateStr, label: date.toLocaleDateString('tr-TR', { weekday: 'short', day: 'numeric' }) });
     }
-    const completedVisits = analyticsLogs.filter(log => log.exit_at);
-    let avgStayMins = 0;
-    if (completedVisits.length > 0) {
-      const totalMins = completedVisits.reduce((sum, log) => sum + Math.floor((new Date(log.exit_at) - new Date(log.created_at)) / 60000), 0);
-      avgStayMins = Math.floor(totalMins / completedVisits.length);
+
+    let todayCount = 0, todayVehicle = 0, todayVisitor = 0, weekCount = 0;
+    let completedCount = 0, totalStayMins = 0;
+    const categoryStats = {};
+    const shiftStats = {};
+
+    // Single pass
+    for (const log of analyticsLogs) {
+      const logDate = toDateOnly(log.created_at);
+      const isToday = logDate === today;
+      if (isToday) {
+        todayCount++;
+        if (log.type === 'vehicle') todayVehicle++;
+        else if (log.type === 'visitor') todayVisitor++;
+        if (log.shift) shiftStats[log.shift] = (shiftStats[log.shift] || 0) + 1;
+      }
+      if (new Date(log.created_at) >= weekAgo) weekCount++;
+      if (!liteMode) {
+        categoryStats[log.sub_category] = (categoryStats[log.sub_category] || 0) + 1;
+        if (logDate in dailyBuckets) dailyBuckets[logDate]++;
+      }
+      if (log.exit_at) {
+        totalStayMins += Math.floor((new Date(log.exit_at) - new Date(log.created_at)) / 60000);
+        completedCount++;
+      }
     }
+
+    const dailyStats = liteMode ? [] : dailyLabels.map(d => ({ date: d.label, count: dailyBuckets[d.dateStr] }));
+
     return {
-      today: todayLogs.length, todayVehicle: todayLogs.filter(l => l.type === 'vehicle').length,
-      todayVisitor: todayLogs.filter(l => l.type === 'visitor').length, activeNow: activeLogs.length,
-      longStayCount, week: weekLogs.length, categoryStats, shiftStats, dailyStats, avgStayMins
+      today: todayCount, todayVehicle, todayVisitor, activeNow: activeLogs.length,
+      longStayCount, week: weekCount, categoryStats, shiftStats, dailyStats,
+      avgStayMins: completedCount > 0 ? Math.floor(totalStayMins / completedCount) : 0
     };
-  }, [analyticsLogs, activeLogs, longStayCount]);
+  }, [analyticsLogs, activeLogs, longStayCount, liteMode]);
 
   // --- SAFETY & RESET MECHANISMS ---
   useEffect(() => {
@@ -3850,6 +3847,7 @@ const sendDailyReport = useCallback((dateParam) => {
             </div>
           )}
 
+          {!liteMode && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
             <div className="bg-gradient-to-br from-amber-600/90 to-amber-800/80 p-5 rounded-xl shadow-lg border border-amber-500/20"><div className="flex items-center justify-between"><div><p className="text-amber-200 text-sm font-medium">Bugün Toplam</p><p className="text-3xl font-bold text-white mt-1">{stats.today}</p></div><Activity className="text-amber-300" size={40} /></div></div>
             <div className="bg-gradient-to-br from-emerald-600/90 to-emerald-800/80 p-5 rounded-xl shadow-lg border border-emerald-500/20"><div className="flex items-center justify-between"><div><p className="text-emerald-200 text-sm font-medium">Şu An İçeride</p><p className="text-3xl font-bold text-white mt-1">{stats.activeNow}</p></div><Users className="text-emerald-300" size={40} /></div></div>
@@ -3857,57 +3855,80 @@ const sendDailyReport = useCallback((dateParam) => {
             <div className="bg-gradient-to-br from-orange-600/90 to-orange-800/80 p-5 rounded-xl shadow-lg border border-orange-500/20"><div className="flex items-center justify-between"><div><p className="text-orange-200 text-sm font-medium">Bu Hafta</p><p className="text-3xl font-bold text-white mt-1">{stats.week}</p></div><TrendingUp className="text-orange-300" size={40} /></div></div>
             <div className="bg-gradient-to-br from-yellow-600/90 to-amber-800/80 p-5 rounded-xl shadow-lg border border-yellow-500/20"><div className="flex items-center justify-between"><div><p className="text-yellow-200 text-sm font-medium">Ort. Kalış Süresi</p><p className="text-2xl font-bold text-white mt-1">{Math.floor(stats.avgStayMins / 60)}s {stats.avgStayMins % 60}dk</p></div><Timer className="text-yellow-300" size={40} /></div></div>
           </div>
+          )}
 
           {liteMode ? (
-          /* ===== LITE MODE: sadece hızlı işlemler ve aktif durum ===== */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="ui-card p-5">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Zap className="text-green-400" /> Hızlı İşlemler</h3>
-              <div className="space-y-4">
-                <div className="ui-panel-lg">
-                  <div className="flex justify-between items-center mb-3"><span className="text-zinc-400 text-sm">Şu an içeride</span><span className="text-2xl font-bold text-green-400">{activeLogs.length}</span></div>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="bg-zinc-800 p-2 rounded flex justify-between"><span className="text-zinc-400">Araç</span><span className="font-bold">{activeVehicleCount}</span></div>
-                    <div className="bg-zinc-800 p-2 rounded flex justify-between"><span className="text-zinc-400">Ziyaretçi</span><span className="font-bold">{activeVisitorCount}</span></div>
-                  </div>
+          /* ===== MINI / TERMINAL MODE: hız öncelikli, düz, kompakt ===== */
+          <div className="space-y-3">
+            {/* Özet satırı */}
+            <div className="grid grid-cols-4 gap-2">
+              <div className="bg-zinc-900 border border-zinc-700 p-3 rounded text-center">
+                <div className="text-xs text-green-400 font-bold">GİRİŞ</div>
+                <div className="text-2xl font-bold text-white">{todayCounts.entry}</div>
+              </div>
+              <div className="bg-zinc-900 border border-zinc-700 p-3 rounded text-center">
+                <div className="text-xs text-red-400 font-bold">ÇIKIŞ</div>
+                <div className="text-2xl font-bold text-white">{todayCounts.exit}</div>
+              </div>
+              <div className="bg-zinc-900 border border-green-600/40 p-3 rounded text-center">
+                <div className="text-xs text-orange-400 font-bold">İÇERİDE</div>
+                <div className="text-2xl font-bold text-green-400">{activeLogs.length}</div>
+              </div>
+              <div className={`bg-zinc-900 border p-3 rounded text-center ${longStayCount > 0 ? 'border-red-500/60' : 'border-zinc-700'}`}>
+                <div className="text-xs text-red-400 font-bold">4+ SAAT</div>
+                <div className={`text-2xl font-bold ${longStayCount > 0 ? 'text-red-400' : 'text-zinc-500'}`}>{longStayCount}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* İçeridekiler + 4+ saat uyarı */}
+              <div className="bg-zinc-900 border border-zinc-700 p-3 rounded">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm font-bold text-zinc-300">Şu an içeride</span>
+                  <span className="text-xs text-zinc-500">A:{activeVehicleCount} Z:{activeVisitorCount}</span>
                 </div>
                 {longStayLogsList.length > 0 && (
-                  <div className="bg-red-900/30 border border-red-500/50 p-4 rounded-lg">
-                    <div className="flex items-center gap-2 mb-2"><AlertTriangle className="text-red-400" size={18} /><span className="text-red-300 font-bold">4+ Saat İçeride</span></div>
-                    <div className="space-y-1 max-h-[120px] overflow-y-auto">
-                      {longStayLogsList.map(log => (
-                        <div key={log.id} className="flex justify-between items-center text-sm bg-red-900/30 p-2 rounded">
-                          <span className="text-red-200">{log.plate || log.name}</span>
-                          <span className="text-red-400 font-mono">{Math.floor((new Date() - new Date(log.created_at)) / 3600000)}s {Math.floor(((new Date() - new Date(log.created_at)) % 3600000) / 60000)}dk</span>
-                        </div>
-                      ))}
-                    </div>
+                  <div className="mb-2 p-2 bg-red-900/30 border border-red-600/40 rounded text-xs space-y-1">
+                    {longStayLogsList.slice(0, 5).map(log => (
+                      <div key={log.id} className="flex justify-between text-red-300">
+                        <span>{log.plate || log.name}</span>
+                        <span className="font-mono">{Math.floor((new Date() - new Date(log.created_at)) / 3600000)}s {Math.floor(((new Date() - new Date(log.created_at)) % 3600000) / 60000)}dk</span>
+                      </div>
+                    ))}
                   </div>
                 )}
-                <div className="ui-panel-lg">
-                  <p className="text-zinc-400 text-sm mb-2">Son Çıkışlar</p>
-                  <div className="space-y-1 max-h-[100px] overflow-y-auto">
-                    {recentExitedLogs.map(log => (
-                      <div key={log.id} className="flex justify-between items-center text-sm text-zinc-300">
-                        <span>{log.plate || log.name}</span>
-                        <span className="text-zinc-500">{new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+                <div className="max-h-[140px] overflow-y-auto space-y-1 text-xs">
+                  {activeLogs.slice(0, 20).map(log => (
+                    <div key={log.id} className="flex justify-between text-zinc-400 py-0.5">
+                      <span className="text-zinc-200 truncate mr-2">{log.plate || log.name}</span>
+                      <span className="font-mono whitespace-nowrap">{new Date(log.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Son çıkışlar + vardiya */}
+              <div className="bg-zinc-900 border border-zinc-700 p-3 rounded">
+                <div className="text-sm font-bold text-zinc-300 mb-2">Son Çıkışlar</div>
+                <div className="space-y-1 text-xs mb-3">
+                  {recentExitedLogs.map(log => (
+                    <div key={log.id} className="flex justify-between text-zinc-400 py-0.5">
+                      <span className="text-zinc-200">{log.plate || log.name}</span>
+                      <span className="font-mono">{new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-zinc-700 pt-2 mt-2">
+                  <div className="text-sm font-bold text-zinc-300 mb-2">Vardiya</div>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    {['Vardiya 1 (08:00-16:00)', 'Vardiya 2 (16:00-00:00)', 'Vardiya 3 (00:00-08:00)'].map(shift => (
+                      <div key={shift} className={`p-2 rounded text-center ${currentShift === shift ? 'bg-blue-700 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+                        <div className="text-[10px]">{shift.split(' ')[0]}</div>
+                        <div className="text-lg font-bold">{stats.shiftStats[shift] || 0}</div>
                       </div>
                     ))}
                   </div>
                 </div>
-              </div>
-            </div>
-            <div className="ui-card p-5">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Clock className="text-blue-400" /> Bugün Detay</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center p-3 bg-zinc-900 rounded"><span className="flex items-center gap-2"><Car className="text-blue-400" size={18} /> Araç Girişi</span><span className="font-bold text-xl">{stats.todayVehicle}</span></div>
-                <div className="flex justify-between items-center p-3 bg-zinc-900 rounded"><span className="flex items-center gap-2"><User className="text-purple-400" size={18} /> Ziyaretçi</span><span className="font-bold text-xl">{stats.todayVisitor}</span></div>
-              </div>
-              <h3 className="text-lg font-bold mt-6 mb-4 flex items-center gap-2"><Layers className="text-yellow-400" /> Vardiya</h3>
-              <div className="grid grid-cols-3 gap-3">
-                {['Vardiya 1 (08:00-16:00)', 'Vardiya 2 (16:00-00:00)', 'Vardiya 3 (00:00-08:00)'].map(shift => (
-                  <div key={shift} className={`p-3 rounded-xl text-center ${currentShift === shift ? 'bg-blue-600' : 'bg-zinc-900'}`}><p className="text-xs text-zinc-300">{shift.split(' ')[0]}</p><p className="text-xl font-bold mt-1">{stats.shiftStats[shift] || 0}</p></div>
-                ))}
               </div>
             </div>
           </div>
