@@ -1946,7 +1946,14 @@ export default function App() {
     resetForm();
   }, [exitSealNumber, exitingLogData, handleExit, showToast, resetForm]);
 
-  const handleDelete = useCallback(async (id) => {
+  const handleDelete = useCallback(async (logOrId) => {
+    const targetLog = (logOrId && typeof logOrId === 'object')
+      ? logOrId
+      : (editingLog && (String(editingLog?.id || '') === String(logOrId) || getLogBindingId(editingLog) === String(logOrId))
+        ? editingLog
+        : (allLogs.find((log) => String(log?.id || '') === String(logOrId) || getLogBindingId(log) === String(logOrId)) || null));
+    const localRecordId = targetLog?.id ?? (typeof logOrId === 'object' ? null : logOrId);
+    const bindingId = getLogBindingId(targetLog) || (localRecordId !== undefined && localRecordId !== null ? String(localRecordId) : '');
     setConfirmModal({
       isOpen: true,
       title: 'Kayıt Silme',
@@ -1955,32 +1962,44 @@ export default function App() {
       onConfirm: async () => {
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
         try {
-          setActionLoading(id);
+          setActionLoading(localRecordId || bindingId || 'delete');
           // Electron ortamında yerel SQLite kullan
           if (isElectron) {
-            await dbClient.deleteLog(id);
+            if (!localRecordId) {
+              throw new Error('Silinecek kayıt için yerel kimlik bulunamadı.');
+            }
+            await dbClient.deleteLog(localRecordId);
             showToast("Kayıt silindi.", "success");
             fetchData();
             setEditingLog(null);
           } else {
             // Web ortamında Supabase kullan
             if (!isOnline) {
-              saveToOfflineQueue(null, 'DELETE', id);
+              saveToOfflineQueue(null, 'DELETE', localRecordId, targetLog?.created_at || null);
               setEditingLog(null);
               return;
             }
-            const { error } = await supabase.from('security_logs').delete().eq('id', id);
-            if (!error) { showToast("Kayıt silindi.", "success"); fetchData(); setEditingLog(null); }
+            let query = supabase.from('security_logs').delete();
+            if (targetLog?.created_at) {
+              query = query.eq('created_at', targetLog.created_at);
+            } else if (localRecordId) {
+              query = query.eq('id', localRecordId);
+            } else {
+              throw new Error('Silinecek kayıt için uzak eşleşme anahtarı bulunamadı.');
+            }
+            const { data: deletedRows, error } = await query.select('id, created_at');
+            if (!error && Array.isArray(deletedRows) && deletedRows.length > 0) { showToast("Kayıt silindi.", "success"); fetchData(); setEditingLog(null); }
+            else if (!error) showToast("Silme hatası: hedef kayıt bulunamadı.", "error");
             else showToast("Silme hatası!", "error");
           }
         } catch (error) {
-          showToast("Bağlantı hatası!", "error");
+          showToast(error?.message || "Bağlantı hatası!", "error");
         } finally {
           setActionLoading(null);
         }
       }
     });
-  }, [isOnline, saveToOfflineQueue, fetchData, showToast]);
+  }, [allLogs, editingLog, isOnline, saveToOfflineQueue, fetchData, showToast]);
 
   const handleUpdate = useCallback(async () => {
     const normalizedEditEntryLocation = sanitizeInput(editForm.entry_location);
@@ -2009,7 +2028,7 @@ export default function App() {
     }
 
     try {
-      setActionLoading(editingLog.id);
+      setActionLoading(editingLog.id || getLogBindingId(editingLog) || 'update');
       // Electron ortamında yerel SQLite kullan
       if (isElectron) {
         await dbClient.updateLog(editingLog.id, updateData);
@@ -2019,16 +2038,25 @@ export default function App() {
       } else {
         // Web ortamında Supabase kullan
         if (!isOnline) {
-          saveToOfflineQueue(updateData, 'UPDATE', editingLog.id);
+          saveToOfflineQueue(updateData, 'UPDATE', editingLog.id, editingLog.created_at || null);
           setEditingLog(null);
           return;
         }
-        const { error } = await supabase.from('security_logs').update(pickSupabaseCompatibleLog(updateData)).eq('id', editingLog.id);
-        if (!error) { showToast("Güncellendi."); setEditingLog(null); fetchData(); }
+        let query = supabase.from('security_logs').update(pickSupabaseCompatibleLog(updateData));
+        if (editingLog?.created_at) {
+          query = query.eq('created_at', editingLog.created_at);
+        } else if (editingLog?.id) {
+          query = query.eq('id', editingLog.id);
+        } else {
+          throw new Error('Güncellenecek kayıt için uzak eşleşme anahtarı bulunamadı.');
+        }
+        const { data: updatedRows, error } = await query.select('id, created_at');
+        if (!error && Array.isArray(updatedRows) && updatedRows.length > 0) { showToast("Güncellendi."); setEditingLog(null); fetchData(); }
+        else if (!error) showToast("Güncelleme hatası: hedef kayıt bulunamadı.", "error");
         else showToast("Güncelleme hatası!", "error");
       }
     } catch (error) {
-      showToast("Bağlantı hatası!", "error");
+      showToast(error?.message || "Bağlantı hatası!", "error");
     } finally {
       setActionLoading(null);
     }
@@ -7247,7 +7275,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
                                 {/* SİL BUTONU */}
                                 <button
-                                  onClick={() => handleDelete(log.id)}
+                                  onClick={() => handleDelete(log)}
                                   className="px-2 py-1.5 rounded bg-zinc-800 hover:bg-red-900 text-red-500 hover:text-red-300 transition-colors"
                                   title="Kaydı Sil"
                                 >
@@ -7600,7 +7628,7 @@ const sendDailyReport = useCallback((dateParam) => {
                           {isInside && (<button onClick={() => handleQuickExit(log)} disabled={actionLoading === log.id} className="text-red-400 hover:text-white p-2 bg-red-900/50 rounded hover:bg-red-600 transition text-xs font-bold flex items-center gap-1" title="Çıkış Yap"><LogOut size={14} /></button>)}
                           {!isInside && !isAlreadyInside && (<button onClick={() => handleReEntry(log)} disabled={actionLoading === log.id || loading} className="text-green-400 hover:text-white p-2 bg-green-900/50 rounded hover:bg-green-600 transition text-xs font-bold flex items-center gap-1" title="Tekrar Giriş Yap"><RotateCcw size={14} /></button>)}
                           <button onClick={() => { setEditingLog(log); setEditForm({ ...log, entry_location: getEntryLocation(log), exit_location: getExitLocation(log) }); }} className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"><Edit size={14} /></button>
-                          <button onClick={() => handleDelete(log.id)} className="text-red-400 hover:text-red-300 p-2 bg-zinc-900 rounded hover:bg-red-900/50 transition"><Trash2 size={14} /></button>
+                          <button onClick={() => handleDelete(log)} className="text-red-400 hover:text-red-300 p-2 bg-zinc-900 rounded hover:bg-red-900/50 transition"><Trash2 size={14} /></button>
                         </div>
                       </td>
                     </tr>
@@ -7876,7 +7904,7 @@ const sendDailyReport = useCallback((dateParam) => {
             <div className="col-span-2"><FormField label="AÇIKLAMA"><Textarea value={editForm.note || ''} onChange={e => setEditForm({ ...editForm, note: e.target.value })} className="h-24" /></FormField></div>
           </div>
           <div className="flex gap-3">
-            <Button onClick={() => handleDelete(editingLog.id)} variant="destructive" className="gap-2"><Trash2 size={16} /> Sil</Button>
+            <Button onClick={() => handleDelete(editingLog)} variant="destructive" className="gap-2"><Trash2 size={16} /> Sil</Button>
             <Button onClick={() => setEditingLog(null)} variant="secondary" className="flex-1">İptal</Button>
             <Button onClick={handleUpdate} disabled={actionLoading === editingLog?.id} variant="primary" className="flex-1">{actionLoading === editingLog?.id ? <><RefreshCw size={14} className="animate-spin" /> Kaydediliyor...</> : 'Değişiklikleri Kaydet'}</Button>
           </div>
