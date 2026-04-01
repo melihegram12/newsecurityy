@@ -133,6 +133,9 @@ def check_local_db():
         cur.execute("SELECT created_at FROM security_logs")
         created_at_rows = [r[0] for r in cur.fetchall()]
 
+        cur.execute("SELECT COUNT(*) FROM security_logs WHERE created_at IS NULL")
+        null_created_at_count = cur.fetchone()[0]
+
         cur.execute(
             """
             SELECT COUNT(*)
@@ -157,8 +160,18 @@ def check_local_db():
         from collections import Counter
         cnt = Counter(created_at_rows)
         dup_count = sum(1 for v in cnt.values() if v > 1)
+        duplicate_rows = sum(v for v in cnt.values() if v > 1)
+        db_ok = True
+
+        if null_created_at_count:
+            fail("created_at null values", f"{null_created_at_count} kayit")
+            db_ok = False
+        else:
+            ok("created_at null values", "none")
+
         if dup_count:
-            warn("created_at duplicates", str(dup_count))
+            fail("created_at duplicates", f"{dup_count} grup / {duplicate_rows} kayit")
+            db_ok = False
         else:
             ok("created_at duplicates", "none")
 
@@ -168,7 +181,7 @@ def check_local_db():
             ok("created_at after exit_at", "none")
 
         con.close()
-        return True
+        return db_ok
     except Exception as exc:
         fail("Local DB error", str(exc))
         return False

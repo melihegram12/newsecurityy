@@ -308,6 +308,16 @@ const isOnConflictConstraintError = (error) => {
     return msg.includes('on conflict') && (msg.includes('constraint') || msg.includes('unique') || msg.includes('exclusion'));
 };
 
+const buildCreatedAtIntegrityError = (operation, error) => {
+    const detail = error?.message || String(error || '');
+    const nextError = new Error(
+        `Supabase security_logs.created_at unique korumasi eksik veya bozuk. ${operation} guvenli sekilde tamamlanmadi. ${detail}`
+    );
+    nextError.code = 'CREATED_AT_INTEGRITY_REQUIRED';
+    nextError.cause = error;
+    return nextError;
+};
+
 const dropUnsupportedSupabaseColumns = (payload = {}, error) => {
     const nextPayload = { ...payload };
     const keys = Object.keys(nextPayload);
@@ -411,17 +421,16 @@ async function syncToSupabase(action, data, localId = null, options = {}) {
             console.log('📦 Supabase INSERT payload:', payload);
 
             const writeInsertPayload = async (insertPayload) => {
-                let response = await supabase
+                const response = await supabase
                     .from('security_logs')
                     .upsert([insertPayload], { onConflict: 'created_at' })
                     .select();
 
-                // Eğer created_at için unique/onConflict desteği yoksa eski davranışa dön.
                 if (response.error && isOnConflictConstraintError(response.error)) {
-                    response = await supabase
-                        .from('security_logs')
-                        .insert([insertPayload])
-                        .select();
+                    return {
+                        data: null,
+                        error: buildCreatedAtIntegrityError('INSERT', response.error)
+                    };
                 }
                 return response;
             };
@@ -1143,10 +1152,8 @@ async function exportLocalLogsToSupabase(options = {}) {
 
                     error = response?.error || null;
                     if (error && isOnConflictConstraintError(error)) {
-                        response = await supabase
-                            .from('security_logs')
-                            .insert(workingPayload);
-                        error = response?.error || null;
+                        error = buildCreatedAtIntegrityError('BULK_EXPORT', error);
+                        break;
                     }
 
                     if (!error) break;
