@@ -5,6 +5,7 @@ import unicodedata
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import generics
@@ -25,11 +26,13 @@ from .models import (
     Badge,
     Device,
     DeviceSession,
+    HostPreset,
     Person,
     PayrollProfile,
     SecurityLog,
     ShiftAssignment,
     UserRole,
+    VehiclePreset,
     WorkShift,
 )
 from .serializers import (
@@ -37,12 +40,16 @@ from .serializers import (
     AbsenceTypeSerializer,
     AccessEventSerializer,
     AuditLogSerializer,
+    BadgeSerializer,
     CheckRequestSerializer,
     DeviceAuthRequestSerializer,
+    HostPresetSerializer,
     LogSyncSerializer,
+    PersonSerializer,
     PayrollProfileSerializer,
     SecurityLogSerializer,
     ShiftAssignmentSerializer,
+    VehiclePresetSerializer,
     WorkShiftSerializer,
 )
 
@@ -701,6 +708,186 @@ class LogListView(APIView):
         return Response(SecurityLogSerializer(qs, many=True).data, status=status.HTTP_200_OK)
 
 
+class PersonListCreateView(generics.ListCreateAPIView):
+    serializer_class = PersonSerializer
+
+    def get_queryset(self):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+
+        qs = Person.objects.all()
+        kind = self.request.query_params.get('kind')
+        active = self.request.query_params.get('active')
+        inside = self.request.query_params.get('inside')
+        query = (self.request.query_params.get('q') or '').strip()
+
+        if kind:
+            qs = qs.filter(kind=kind)
+        if active in ('1', 'true', 'True'):
+            qs = qs.filter(is_active=True)
+        elif active in ('0', 'false', 'False'):
+            qs = qs.filter(is_active=False)
+        if inside in ('1', 'true', 'True'):
+            qs = qs.filter(is_inside=True)
+        elif inside in ('0', 'false', 'False'):
+            qs = qs.filter(is_inside=False)
+        if query:
+            qs = qs.filter(
+                Q(full_name__icontains=query)
+                | Q(tc_no__icontains=query)
+                | Q(phone__icontains=query)
+            )
+
+        return qs.order_by('full_name', 'created_at')
+
+    def perform_create(self, serializer):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        obj = serializer.save()
+        _audit(self.request, 'person.create', 'person', obj.id, obj.full_name)
+
+
+class PersonDetailView(generics.RetrieveUpdateAPIView):
+    serializer_class = PersonSerializer
+
+    def get_queryset(self):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        return Person.objects.all()
+
+    def perform_update(self, serializer):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        obj = serializer.save()
+        _audit(self.request, 'person.update', 'person', obj.id, obj.full_name)
+
+
+class BadgeListCreateView(generics.ListCreateAPIView):
+    serializer_class = BadgeSerializer
+
+    def get_queryset(self):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+
+        qs = Badge.objects.select_related('person').all()
+        person_id = self.request.query_params.get('person_id')
+        active = self.request.query_params.get('active')
+        query = (self.request.query_params.get('q') or '').strip()
+
+        if person_id:
+            qs = qs.filter(person_id=person_id)
+        if active in ('1', 'true', 'True'):
+            qs = qs.filter(is_active=True)
+        elif active in ('0', 'false', 'False'):
+            qs = qs.filter(is_active=False)
+        if query:
+            qs = qs.filter(
+                Q(code__icontains=query)
+                | Q(person__full_name__icontains=query)
+            )
+
+        return qs.order_by('person__full_name', 'code')
+
+    def perform_create(self, serializer):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        obj = serializer.save()
+        _audit(self.request, 'badge.create', 'badge', obj.id, obj.code)
+
+
+class BadgeDetailView(generics.RetrieveUpdateAPIView):
+    serializer_class = BadgeSerializer
+
+    def get_queryset(self):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        return Badge.objects.select_related('person').all()
+
+    def perform_update(self, serializer):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        obj = serializer.save()
+        _audit(self.request, 'badge.update', 'badge', obj.id, obj.code)
+
+
+class HostPresetListCreateView(generics.ListCreateAPIView):
+    serializer_class = HostPresetSerializer
+
+    def get_queryset(self):
+        _require_role(self.request.user, [ROLE_SECURITY, ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+
+        qs = HostPreset.objects.all()
+        active = self.request.query_params.get('active')
+        query = (self.request.query_params.get('q') or '').strip()
+
+        if active in ('1', 'true', 'True'):
+            qs = qs.filter(is_active=True)
+        elif active in ('0', 'false', 'False'):
+            qs = qs.filter(is_active=False)
+        if query:
+            qs = qs.filter(name__icontains=query)
+
+        return qs.order_by('sort_order', 'name')
+
+    def perform_create(self, serializer):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        obj = serializer.save()
+        _audit(self.request, 'host_preset.create', 'host_preset', obj.id, obj.name)
+
+
+class HostPresetDetailView(generics.RetrieveUpdateAPIView):
+    serializer_class = HostPresetSerializer
+
+    def get_queryset(self):
+        _require_role(self.request.user, [ROLE_SECURITY, ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        return HostPreset.objects.all()
+
+    def perform_update(self, serializer):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        obj = serializer.save()
+        _audit(self.request, 'host_preset.update', 'host_preset', obj.id, obj.name)
+
+
+class VehiclePresetListCreateView(generics.ListCreateAPIView):
+    serializer_class = VehiclePresetSerializer
+
+    def get_queryset(self):
+        _require_role(self.request.user, [ROLE_SECURITY, ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+
+        qs = VehiclePreset.objects.all()
+        active = self.request.query_params.get('active')
+        category = self.request.query_params.get('category')
+        query = (self.request.query_params.get('q') or '').strip()
+
+        if active in ('1', 'true', 'True'):
+            qs = qs.filter(is_active=True)
+        elif active in ('0', 'false', 'False'):
+            qs = qs.filter(is_active=False)
+        if category:
+            qs = qs.filter(category=category)
+        if query:
+            qs = qs.filter(
+                Q(plate__icontains=query)
+                | Q(label__icontains=query)
+            )
+
+        return qs.order_by('category', 'sort_order', 'plate')
+
+    def perform_create(self, serializer):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        obj = serializer.save(plate=(serializer.validated_data.get('plate') or '').strip().upper())
+        _audit(self.request, 'vehicle_preset.create', 'vehicle_preset', obj.id, obj.display_name)
+
+
+class VehiclePresetDetailView(generics.RetrieveUpdateAPIView):
+    serializer_class = VehiclePresetSerializer
+
+    def get_queryset(self):
+        _require_role(self.request.user, [ROLE_SECURITY, ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        return VehiclePreset.objects.all()
+
+    def perform_update(self, serializer):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_DEVELOPER])
+        plate = serializer.validated_data.get('plate')
+        save_kwargs = {}
+        if plate is not None:
+            save_kwargs['plate'] = plate.strip().upper()
+        obj = serializer.save(**save_kwargs)
+        _audit(self.request, 'vehicle_preset.update', 'vehicle_preset', obj.id, obj.display_name)
+
+
 class AbsenceTypeListCreateView(generics.ListCreateAPIView):
     serializer_class = AbsenceTypeSerializer
 
@@ -1269,10 +1456,15 @@ class SGKReportView(APIView):
 
         summary = []
         for (code, person_id), data in grouped.items():
+            person_name = next(
+                (item['person_name'] for item in details if item['person_id'] == str(person_id) and item['sgk_code'] == code),
+                '',
+            )
             summary.append(
                 {
                     'sgk_code': code,
                     'person_id': str(person_id),
+                    'person_name': person_name,
                     'missing_days': data['days'],
                     'missing_hours': data['hours'],
                     'records': data['records'],

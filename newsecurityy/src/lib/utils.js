@@ -116,9 +116,9 @@ export const formatForInput = (isoString) => {
   try {
     const date = new Date(isoString);
     if (isNaN(date.getTime())) return '';
-    const offset = date.getTimezoneOffset() * 60000;
-    const localISOTime = (new Date(date - offset)).toISOString().slice(0, 16);
-    return localISOTime;
+    // Türkiye saati (UTC+3) ile datetime-local input formatı
+    const trMs = date.getTime() + 3 * 60 * 60 * 1000;
+    return new Date(trMs).toISOString().slice(0, 16);
   } catch (error) {
     return '';
   }
@@ -130,13 +130,30 @@ export const safeDate = (value) => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
+// Türkiye sabit UTC+3 — sistem timezone'undan bağımsız doğru gösterim
+const TR_TZ = { timeZone: 'Europe/Istanbul' };
+
+export const formatTrDate = (v, extraOpts) => {
+  const d = safeDate(v);
+  return d ? d.toLocaleDateString('tr-TR', { ...TR_TZ, ...extraOpts }) : '';
+};
+
+export const formatTrTime = (v, extraOpts) => {
+  const d = safeDate(v);
+  return d ? d.toLocaleTimeString('tr-TR', { ...TR_TZ, ...extraOpts }) : '';
+};
+
+export const formatTrDateTime = (v) => {
+  const d = safeDate(v);
+  return d ? d.toLocaleString('tr-TR', TR_TZ) : '';
+};
+
 export const toDateOnly = (value) => {
   const d = safeDate(value);
   if (!d) return null;
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  // Türkiye timezone'unda tarih parçalarını al
+  const parts = new Intl.DateTimeFormat('en-CA', { ...TR_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  return parts; // yyyy-MM-dd
 };
 
 export const calculateWaitTime = (createdAt) => {
@@ -152,6 +169,22 @@ export const calculateWaitTime = (createdAt) => {
   } catch (error) {
     return { hours: 0, mins: 0, totalMins: 0, isLongStay: false };
   }
+};
+
+export const getChronologyIssue = (createdAt, exitAt) => {
+  if (!exitAt) return null;
+  const entry = safeDate(createdAt);
+  const exit = safeDate(exitAt);
+  if (!entry || !exit) return 'invalid_timestamp';
+  if (exit.getTime() < entry.getTime()) return 'exit_before_entry';
+  return null;
+};
+
+export const calculateStayMinutes = (createdAt, exitAt) => {
+  const entry = safeDate(createdAt);
+  const exit = safeDate(exitAt);
+  if (!entry || !exit) return 0;
+  return Math.max(0, Math.floor((exit.getTime() - entry.getTime()) / 60000));
 };
 
 export const getCategoryStyle = (cat) => {

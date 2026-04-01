@@ -1,0 +1,17 @@
+extends: null
+appId: com.malhotra.newsecurityy
+productName: NewSecurityy Guvenlik Paneli
+compression: maximum
+directories:
+  output: dist
+files:
+  - build/**/*
+  - electron/**/*
+  - public/**/*
+win:
+  target: nsis
+  icon: public/logo512.png
+nsis:
+  artifactName: NewSecurityy-Lite-Setup-${version}.exe
+extraMetadata:
+  desktopProfile: lite

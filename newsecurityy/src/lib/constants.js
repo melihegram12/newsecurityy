@@ -3,7 +3,7 @@ export const OFFLINE_QUEUE_KEY = 'security_offline_queue';
 export const LONG_STAY_HOURS = 4;
 export const BUILD_TIME_RAW = process.env.REACT_APP_BUILD_TIME || '';
 export const BUILD_TIME = BUILD_TIME_RAW && !Number.isNaN(Date.parse(BUILD_TIME_RAW))
-  ? new Date(BUILD_TIME_RAW).toLocaleString('tr-TR')
+  ? new Date(BUILD_TIME_RAW).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })
   : (BUILD_TIME_RAW || 'dev');
 export const LOCAL_API_URL_KEY = 'local_api_url';
 export const LOCAL_API_KEY_KEY = 'local_api_key';
@@ -18,6 +18,7 @@ export const SHOW_SMTP_PANEL_KEY = 'show_smtp_panel';
 export const SHOW_HISTORY_PANEL_KEY = 'show_history_panel';
 export const LITE_MODE_KEY = 'ui_lite_mode';
 export const LITE_MODE_OVERRIDE_KEY = 'ui_lite_mode_manual';
+export const FORCE_LITE_MODE = String(process.env.REACT_APP_FORCE_LITE || '').toLowerCase() === 'true';
 export const FEATURE_FLAGS_KEY = 'feature_flags_v2';
 export const ATTACHMENTS_SETTINGS_KEY = 'log_attachments_v1';
 export const SUPABASE_SYNC_QUEUE_KEY = 'supabase_sync_queue';

@@ -157,6 +157,63 @@ class Badge(models.Model):
         return self.code
 
 
+class HostPreset(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200, unique=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+
+    def __str__(self):
+        return self.name
+
+
+class VehiclePreset(models.Model):
+    class Category(models.TextChoices):
+        MANAGEMENT = 'management', 'Management'
+        COMPANY = 'company', 'Company'
+
+    class DefaultDriverType(models.TextChoices):
+        OWNER = 'owner', 'Owner'
+        OTHER = 'other', 'Other'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    plate = models.CharField(max_length=30, unique=True)
+    label = models.CharField(max_length=200, blank=True, default='')
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.MANAGEMENT)
+    default_driver_type = models.CharField(
+        max_length=20,
+        choices=DefaultDriverType.choices,
+        default=DefaultDriverType.OWNER,
+    )
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['category', 'sort_order', 'plate']
+        indexes = [
+            models.Index(fields=['category', 'plate']),
+            models.Index(fields=['is_active', 'category']),
+        ]
+
+    def __str__(self):
+        return self.display_name
+
+    @property
+    def display_name(self):
+        if self.label:
+            return f'{self.plate} - {self.label}'
+        return self.plate
+
+
 class AbsenceType(models.Model):
     class DurationUnit(models.TextChoices):
         FULL_DAY = 'FULL_DAY', 'Full Day'

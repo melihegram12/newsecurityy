@@ -116,7 +116,11 @@ function start() {
   rule.tz = 'Europe/Istanbul';
 
   scheduledJob = schedule.scheduleJob(rule, () => {
-    createBackup('scheduled', false);
+    try {
+      createBackup('scheduled', false);
+    } catch (e) {
+      console.error('Scheduled backup job error:', e?.message || e);
+    }
   });
 
   return {

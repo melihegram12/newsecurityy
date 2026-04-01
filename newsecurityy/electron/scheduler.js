@@ -125,8 +125,12 @@ function start() {
     rule.tz = 'Europe/Istanbul';
 
     scheduledJob = schedule.scheduleJob(rule, async () => {
-      const result = await runJob({ reason: 'scheduled' });
-      console.log('Scheduled email result:', result);
+      try {
+        const result = await runJob({ reason: 'scheduled' });
+        console.log('Scheduled email result:', result);
+      } catch (e) {
+        console.error('Scheduled email job error:', e?.message || e);
+      }
     });
 
     console.log(`Email scheduler started: Daily at ${hour}:${String(minute).padStart(2, '0')}`);

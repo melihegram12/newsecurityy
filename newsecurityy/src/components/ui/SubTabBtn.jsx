@@ -9,7 +9,7 @@ const SubTabBtn = memo(function SubTabBtn({ active, onClick, icon, label }) {
       aria-pressed={active}
     >
       {icon}
-      <span className="text-[10px] font-bold mt-1 uppercase text-center leading-3 min-h-[1.5rem] flex items-center justify-center">{label}</span>
+      <span className="text-[10px] font-bold mt-0.5 uppercase text-center leading-tight min-h-[1.25rem] flex items-center justify-center">{label}</span>
     </button>
   );
 });

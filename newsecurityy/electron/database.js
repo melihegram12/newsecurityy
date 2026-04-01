@@ -85,6 +85,31 @@ function normalizeIsoDate(value) {
   return dt.toISOString();
 }
 
+function getChronologyIssue(createdAt, exitAt) {
+  if (!exitAt) return null;
+  const normalizedCreatedAt = normalizeIsoDate(createdAt);
+  const normalizedExitAt = normalizeIsoDate(exitAt);
+  const createdTime = normalizedCreatedAt ? new Date(normalizedCreatedAt).getTime() : Number.NaN;
+  const exitTime = normalizedExitAt ? new Date(normalizedExitAt).getTime() : Number.NaN;
+  if (Number.isNaN(createdTime) || Number.isNaN(exitTime)) return 'invalid_timestamp';
+  if (exitTime < createdTime) return 'exit_before_entry';
+  return null;
+}
+
+function getChronologyErrorMessage(issue) {
+  if (issue === 'invalid_timestamp') return 'Giriş veya çıkış zamanı geçersiz.';
+  if (issue === 'exit_before_entry') return 'Çıkış saati giriş saatinden önce olamaz.';
+  return 'Kayıt kronolojisi geçersiz.';
+}
+
+function assertChronologyOrThrow(createdAt, exitAt) {
+  const chronologyIssue = getChronologyIssue(createdAt, exitAt);
+  if (!chronologyIssue) return;
+  const error = new Error(getChronologyErrorMessage(chronologyIssue));
+  error.code = chronologyIssue;
+  throw error;
+}
+
 function isBlank(value) {
   if (value === null || value === undefined) return true;
   return String(value).trim() === '';
@@ -206,7 +231,7 @@ function normalizeAndDeduplicateLogs() {
 }
 
 function ensureLogColumns() {
-  if (!db) return;
+  if (!db) return [];
 
   let existing = new Set();
   try {
@@ -224,10 +249,12 @@ function ensureLogColumns() {
     }
   } catch (e) {
     console.error('Error reading security_logs schema:', e);
-    return;
+    return [];
   }
 
-  Object.keys(LOG_COLUMN_DEFS).forEach((col) => {
+  const missingColumns = Object.keys(LOG_COLUMN_DEFS).filter((col) => !existing.has(col));
+
+  missingColumns.forEach((col) => {
     if (existing.has(col)) return;
     try {
       db.run(`ALTER TABLE security_logs ADD COLUMN ${col} ${LOG_COLUMN_DEFS[col]}`);
@@ -236,6 +263,8 @@ function ensureLogColumns() {
       console.error(`Failed to add column ${col}:`, e);
     }
   });
+
+  return missingColumns;
 }
 
 function filterLogData(input = {}) {
@@ -313,25 +342,46 @@ async function initDatabase() {
     )
   `);
 
-  // Eski veritabanlari icin kolonlari tamamla
-  ensureLogColumns();
-  const normalizeResult = normalizeAndDeduplicateLogs();
-  if (normalizeResult.updated > 0 || normalizeResult.deleted > 0) {
-    console.log(`Log timestamps normalized (updated=${normalizeResult.updated}, deleted duplicates=${normalizeResult.deleted})`);
-  }
-
-  db.run(`CREATE INDEX IF NOT EXISTS idx_plate ON security_logs(plate)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_name ON security_logs(name)`);
-  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_created_at_unique ON security_logs(created_at)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_exit_at ON security_logs(exit_at)`);
-
-  // Ayarlar tablosu
+  // Ayarlar tablosu (normalize kontrolünden önce oluşturulmalı)
   db.run(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT
     )
   `);
+
+  // Eski veritabanlari icin kolonlari tamamla
+  const repairedLogColumns = ensureLogColumns();
+  if (repairedLogColumns.length > 0) {
+    console.log(`security_logs schema repaired: ${repairedLogColumns.join(', ')}`);
+  }
+
+  // normalizeAndDeduplicateLogs sadece bir kez çalışır (version flag ile)
+  const NORMALIZE_VERSION = 1;
+  let currentNormVersion = null;
+  try {
+    const stmt = db.prepare(`SELECT value FROM settings WHERE key = ?`);
+    stmt.bind(['_normalize_v']);
+    if (stmt.step()) {
+      try { currentNormVersion = JSON.parse(stmt.getAsObject().value); } catch(e) {}
+    }
+    stmt.free();
+  } catch(e) {}
+
+  if (currentNormVersion !== NORMALIZE_VERSION) {
+    const normalizeResult = normalizeAndDeduplicateLogs();
+    if (normalizeResult.updated > 0 || normalizeResult.deleted > 0) {
+      console.log(`Log timestamps normalized (updated=${normalizeResult.updated}, deleted duplicates=${normalizeResult.deleted})`);
+    }
+    const vStmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
+    vStmt.run(['_normalize_v', JSON.stringify(NORMALIZE_VERSION)]);
+    vStmt.free();
+  }
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_plate ON security_logs(plate)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_name ON security_logs(name)`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_created_at_unique ON security_logs(created_at)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_exit_at ON security_logs(exit_at)`);
 
   // Değişiklikleri kaydet
   saveDatabase();
@@ -340,15 +390,20 @@ async function initDatabase() {
   return db;
 }
 
-// Veritabanını dosyaya kaydet
+// Veritabanını dosyaya kaydet (atomic write: tmp → rename)
 function saveDatabase() {
   if (!db) return;
+  const dbPath = getDbPath();
+  const tmpPath = dbPath + '.tmp';
   try {
     const data = db.export();
     const buffer = Buffer.from(data);
-    fs.writeFileSync(getDbPath(), buffer);
+    fs.writeFileSync(tmpPath, buffer);
+    fs.renameSync(tmpPath, dbPath);
   } catch (e) {
     console.error('Error saving database:', e);
+    // tmp dosyası kaldıysa temizle
+    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) { /* ignore */ }
   }
 }
 
@@ -463,6 +518,7 @@ function insertLog(logData) {
   const safeData = filterLogData(logData || {});
   const createdAt = safeData.created_at || normalizeIsoDate(new Date().toISOString());
   safeData.created_at = createdAt;
+  assertChronologyOrThrow(createdAt, safeData.exit_at);
 
   const existingId = findLogIdByCreatedAt(createdAt);
   if (existingId) {
@@ -526,6 +582,11 @@ function updateLog(id, updateData) {
   const safeData = filterLogData(updateData || {});
   const fields = Object.keys(safeData).filter(k => safeData[k] !== undefined);
   if (fields.length === 0) return false;
+  const existing = getLogById(id);
+  if (!existing) return false;
+  const effectiveCreatedAt = safeData.created_at !== undefined ? safeData.created_at : existing.created_at;
+  const effectiveExitAt = safeData.exit_at !== undefined ? safeData.exit_at : existing.exit_at;
+  assertChronologyOrThrow(effectiveCreatedAt, effectiveExitAt);
 
   const setClause = fields.map(f => `${f} = ?`).join(', ');
   const values = fields.map(f => safeData[f]);
@@ -564,6 +625,11 @@ function upsertLogByCreatedAt(logData) {
   // Supabase id'sini yerel tabloya yazma
   const { id: _remoteId, ...data } = logData;
   const safeData = filterLogData(data);
+  const chronologyIssue = getChronologyIssue(safeData.created_at, safeData.exit_at);
+  if (chronologyIssue) {
+    console.warn('[db.upsertLogByCreatedAt] chronology anomaly skipped:', chronologyIssue, safeData.plate || safeData.name || safeData.created_at);
+    return false;
+  }
   const existingId = findLogIdByCreatedAt(safeData.created_at);
 
   if (existingId) {
@@ -575,7 +641,7 @@ function upsertLogByCreatedAt(logData) {
   return true;
 }
 
-// CSV'den veya toplu kaynaktan içe aktarım (created_at ile upsert)
+// CSV'den veya toplu kaynaktan içe aktarım (created_at ile upsert, transaction korumalı)
 function importLogs(logs = []) {
   if (!Array.isArray(logs)) {
     return { success: false, error: 'invalid_payload' };
@@ -585,6 +651,8 @@ function importLogs(logs = []) {
   let updated = 0;
   let invalid = 0;
   let errors = 0;
+
+  db.run('BEGIN TRANSACTION');
 
   const selectStmt = db.prepare(`SELECT id FROM security_logs WHERE created_at = ? LIMIT 1`);
   const insertStmt = db.prepare(`
@@ -597,37 +665,53 @@ function importLogs(logs = []) {
     WHERE created_at = ?
   `);
 
-  for (const log of logs) {
-    try {
-      const safeData = filterLogData(log || {});
-      const createdAt = safeData.created_at;
-      if (!createdAt) {
-        invalid += 1;
-        continue;
-      }
+  try {
+    for (const log of logs) {
+      try {
+        const safeData = filterLogData(log || {});
+        const createdAt = safeData.created_at;
+        if (!createdAt) {
+          invalid += 1;
+          continue;
+        }
 
-      selectStmt.bind([createdAt]);
-      const exists = selectStmt.step();
-      selectStmt.reset();
+        const chronologyIssue = getChronologyIssue(createdAt, safeData.exit_at);
+        if (chronologyIssue) {
+          invalid += 1;
+          console.warn('[db.importLogs] chronology anomaly skipped:', chronologyIssue, safeData.plate || safeData.name || createdAt);
+          continue;
+        }
 
-      if (exists) {
-        updateStmt.run([
-          ...LOG_UPDATE_COLUMNS.map((col) => (safeData[col] !== undefined ? safeData[col] : null)),
-          createdAt
-        ]);
-        updated += 1;
-      } else {
-        insertStmt.run(LOG_COLUMN_LIST.map((col) => (safeData[col] !== undefined ? safeData[col] : null)));
-        inserted += 1;
+        selectStmt.bind([createdAt]);
+        const exists = selectStmt.step();
+        selectStmt.reset();
+
+        if (exists) {
+          updateStmt.run([
+            ...LOG_UPDATE_COLUMNS.map((col) => (safeData[col] !== undefined ? safeData[col] : null)),
+            createdAt
+          ]);
+          updated += 1;
+        } else {
+          insertStmt.run(LOG_COLUMN_LIST.map((col) => (safeData[col] !== undefined ? safeData[col] : null)));
+          inserted += 1;
+        }
+      } catch (e) {
+        errors += 1;
       }
-    } catch (e) {
-      errors += 1;
     }
+
+    db.run('COMMIT');
+  } catch (e) {
+    console.error('Import transaction failed, rolling back:', e);
+    try { db.run('ROLLBACK'); } catch (_) { /* ignore */ }
+    return { success: false, error: 'transaction_failed', total: logs.length, inserted: 0, updated: 0, invalid, errors };
+  } finally {
+    selectStmt.free();
+    insertStmt.free();
+    updateStmt.free();
   }
 
-  selectStmt.free();
-  insertStmt.free();
-  updateStmt.free();
   saveDatabase();
 
   return {
@@ -660,21 +744,32 @@ function searchLogs(searchTerm, limit = 100) {
   return logs;
 }
 
-// İstatistikler
+// İstatistikler (parametreli sorgular)
 function getStats() {
   const today = new Date().toISOString().split('T')[0];
 
-  const todayResult = db.exec(`SELECT COUNT(*) as count FROM security_logs WHERE date(created_at) = date('${today}')`);
-  const todayCount = todayResult[0]?.values[0][0] || 0;
+  const stmtToday = db.prepare(`SELECT COUNT(*) FROM security_logs WHERE date(created_at) = date(?)`);
+  stmtToday.bind([today]);
+  stmtToday.step();
+  const todayCount = stmtToday.get()[0] || 0;
+  stmtToday.free();
 
-  const activeResult = db.exec(`SELECT COUNT(*) as count FROM security_logs WHERE exit_at IS NULL`);
-  const activeCount = activeResult[0]?.values[0][0] || 0;
+  const stmtActive = db.prepare(`SELECT COUNT(*) FROM security_logs WHERE exit_at IS NULL`);
+  stmtActive.step();
+  const activeCount = stmtActive.get()[0] || 0;
+  stmtActive.free();
 
-  const vehicleResult = db.exec(`SELECT COUNT(*) as count FROM security_logs WHERE date(created_at) = date('${today}') AND type = 'vehicle'`);
-  const vehicleToday = vehicleResult[0]?.values[0][0] || 0;
+  const stmtVehicle = db.prepare(`SELECT COUNT(*) FROM security_logs WHERE date(created_at) = date(?) AND type = ?`);
+  stmtVehicle.bind([today, 'vehicle']);
+  stmtVehicle.step();
+  const vehicleToday = stmtVehicle.get()[0] || 0;
+  stmtVehicle.free();
 
-  const visitorResult = db.exec(`SELECT COUNT(*) as count FROM security_logs WHERE date(created_at) = date('${today}') AND type = 'visitor'`);
-  const visitorToday = visitorResult[0]?.values[0][0] || 0;
+  const stmtVisitor = db.prepare(`SELECT COUNT(*) FROM security_logs WHERE date(created_at) = date(?) AND type = ?`);
+  stmtVisitor.bind([today, 'visitor']);
+  stmtVisitor.step();
+  const visitorToday = stmtVisitor.get()[0] || 0;
+  stmtVisitor.free();
 
   return {
     today: todayCount,
@@ -711,12 +806,17 @@ function getSetting(key) {
   return null;
 }
 
-// Veritabanını kapat
+// Veritabanını kapat (her durumda close garantili)
 function closeDatabase() {
   if (db) {
-    saveDatabase();
-    db.close();
-    db = null;
+    try {
+      saveDatabase();
+    } catch (e) {
+      console.error('Error saving on close:', e);
+    } finally {
+      try { db.close(); } catch (_) { /* ignore */ }
+      db = null;
+    }
   }
 }
 

@@ -7,12 +7,15 @@ from .models import (
     AbsenceType,
     AccessEvent,
     AuditLog,
+    Badge,
+    HostPreset,
     Person,
     PayrollProfile,
     Role,
     SecurityLog,
     ShiftAssignment,
     UserRole,
+    VehiclePreset,
     WorkShift,
 )
 
@@ -122,6 +125,72 @@ class SecurityLogSerializer(serializers.ModelSerializer):
             'user_email',
             'created_at',
             'exit_at',
+        )
+
+
+class PersonSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Person
+        fields = (
+            'id',
+            'kind',
+            'full_name',
+            'tc_no',
+            'phone',
+            'is_inside',
+            'is_active',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = ('is_inside', 'created_at', 'updated_at')
+
+
+class BadgeSerializer(serializers.ModelSerializer):
+    person_name = serializers.CharField(source='person.full_name', read_only=True)
+
+    class Meta:
+        model = Badge
+        fields = (
+            'id',
+            'person',
+            'person_name',
+            'kind',
+            'code',
+            'is_active',
+            'issued_at',
+        )
+        read_only_fields = ('issued_at',)
+
+
+class HostPresetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HostPreset
+        fields = (
+            'id',
+            'name',
+            'sort_order',
+            'is_active',
+            'created_at',
+            'updated_at',
+        )
+
+
+class VehiclePresetSerializer(serializers.ModelSerializer):
+    display_name = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = VehiclePreset
+        fields = (
+            'id',
+            'plate',
+            'label',
+            'display_name',
+            'category',
+            'default_driver_type',
+            'sort_order',
+            'is_active',
+            'created_at',
+            'updated_at',
         )
 
 

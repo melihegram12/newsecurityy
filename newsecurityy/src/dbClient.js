@@ -1,4 +1,5 @@
 // Electron veya Web ortamını tespit et ve uygun API'yi kullan
+import { getChronologyIssue } from './lib/utils';
 import { supabase } from './supabaseClient';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
@@ -16,10 +17,11 @@ const LOCAL_SYNC_ENABLED = String(
     process.env.VITE_LOCAL_SYNC_ENABLED ||
     ''
 ).toLowerCase() === 'true';
+const FORCE_LITE_PROFILE = String(process.env.REACT_APP_FORCE_LITE || '').toLowerCase() === 'true';
 const LOCAL_PULL_DAYS = 30;
 const LOCAL_PULL_LIMIT = 5000;
-const LOCAL_PULL_INTERVAL_MS = 30000;
-const ELECTRON_SUPABASE_PULL_INTERVAL_MS = 30000;
+const LOCAL_PULL_INTERVAL_MS = FORCE_LITE_PROFILE ? 60000 : 30000;
+const ELECTRON_SUPABASE_PULL_INTERVAL_MS = FORCE_LITE_PROFILE ? 60000 : 30000;
 
 const normalizeApiBase = (value) => {
     if (!value) return '';
@@ -173,6 +175,7 @@ function updateLocalQueueCount() {
 
 // Supabase pull settings (electron)
 const PULL_LOOKBACK_DAYS = 3650;
+const DELTA_SYNC_BOOTSTRAP_DAYS = 7;
 let supabasePullInProgress = false;
 let localPullInProgress = false;
 
@@ -219,6 +222,40 @@ const normalizeIsoDate = (value) => {
     return dt.toISOString();
 };
 
+const getChronologyErrorMessage = (issue) => {
+    if (issue === 'invalid_timestamp') return 'Giriş veya çıkış zamanı geçersiz.';
+    if (issue === 'exit_before_entry') return 'Çıkış saati giriş saatinden önce olamaz.';
+    return 'Kayıt kronolojisi geçersiz.';
+};
+
+const validateChronology = ({ created_at, exit_at } = {}, fallbackCreatedAt = null, fallbackExitAt = undefined) => {
+    const effectiveCreatedAt = created_at ?? fallbackCreatedAt;
+    const effectiveExitAt = exit_at !== undefined ? exit_at : fallbackExitAt;
+    const issue = getChronologyIssue(effectiveCreatedAt, effectiveExitAt);
+    return {
+        issue,
+        createdAt: effectiveCreatedAt,
+        exitAt: effectiveExitAt,
+        message: issue ? getChronologyErrorMessage(issue) : null
+    };
+};
+
+const buildChronologySkipResult = (action, issue, data, writeStatus) => {
+    const message = getChronologyErrorMessage(issue);
+    console.warn(`[sync.${action}] chronology anomaly skipped:`, issue, data?.plate || data?.name || data?.created_at || '-');
+    if (typeof writeStatus === 'function') {
+        writeStatus({
+            lastPushAt: new Date().toISOString(),
+            lastPushAction: action,
+            lastPushStatus: 'skipped',
+            lastPushError: message
+        });
+    }
+    const error = new Error(message);
+    error.code = issue;
+    return { ok: false, skipped: true, invalidChronology: true, error };
+};
+
 const SUPABASE_LOG_FIELDS = new Set([
     'event_type',
     'type',
@@ -259,7 +296,11 @@ const pickSupabaseLogFields = (input = {}) => {
 
 const isMissingColumnError = (error, column) => {
     const msg = String(error?.message || error || '');
-    return msg.toLowerCase().includes('column') && msg.toLowerCase().includes(column.toLowerCase());
+    const lower = msg.toLowerCase();
+    if (!lower.includes('column')) return false;
+    const escaped = String(column || '').toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`['"\`]${escaped}['"\`]`).test(lower)) return true;
+    return new RegExp(`(^|[^a-z0-9_])${escaped}([^a-z0-9_]|$)`).test(lower);
 };
 
 const isOnConflictConstraintError = (error) => {
@@ -363,6 +404,10 @@ async function syncToSupabase(action, data, localId = null, options = {}) {
                 writeSyncStatus({ lastPushAt: new Date().toISOString(), lastPushAction: action, lastPushStatus: 'error', lastPushError: error.message });
                 return { ok: false, error };
             }
+            const chronology = validateChronology(payload);
+            if (chronology.issue) {
+                return buildChronologySkipResult(action, chronology.issue, payload, writeSyncStatus);
+            }
             console.log('📦 Supabase INSERT payload:', payload);
 
             const writeInsertPayload = async (insertPayload) => {
@@ -422,6 +467,10 @@ async function syncToSupabase(action, data, localId = null, options = {}) {
                 writeSyncStatus({ lastPushAt: new Date().toISOString(), lastPushAction: action, lastPushStatus: 'ok', lastPushError: null });
                 return { ok: true, skipped: true };
             }
+            const chronology = validateChronology(payload, matchCreatedAt);
+            if (chronology.issue) {
+                return buildChronologySkipResult(action, chronology.issue, { ...payload, created_at: matchCreatedAt }, writeSyncStatus);
+            }
 
             let workingPayload = payload;
             let error = null;
@@ -478,6 +527,10 @@ async function syncToSupabase(action, data, localId = null, options = {}) {
             const matchCreatedAt = normalizeIsoDate(localId || data?.created_at || data?.extraData?.created_at);
             const updateData = pickSupabaseLogFields({ ...(data?.extraData || {}), exit_at: data?.exit_at });
             delete updateData.created_at;
+            const chronology = validateChronology(updateData, matchCreatedAt);
+            if (chronology.issue) {
+                return buildChronologySkipResult(action, chronology.issue, { ...updateData, created_at: matchCreatedAt }, writeSyncStatus);
+            }
 
             let workingPayload = updateData;
             let error = null;
@@ -552,6 +605,30 @@ async function syncToLocalApi(action, data, localId = null, options = {}) {
     try {
         const baseUrl = getLocalApiBase();
         const requestBody = { action };
+        let chronology = null;
+        if (action === 'INSERT') {
+            chronology = validateChronology(data || {});
+        } else if (action === 'UPDATE') {
+            chronology = validateChronology(data || {}, normalizeIsoDate(data?.created_at || localId));
+        } else if (action === 'EXIT') {
+            chronology = validateChronology(
+                { ...(data?.extraData || {}), exit_at: data?.exit_at },
+                normalizeIsoDate(localId || data?.created_at || data?.extraData?.created_at)
+            );
+        }
+        if (chronology?.issue) {
+            const message = chronology.message || getChronologyErrorMessage(chronology.issue);
+            console.warn(`[local-sync.${action}] chronology anomaly skipped:`, chronology.issue, data?.plate || data?.name || data?.created_at || '-');
+            writeLocalSyncStatus({
+                lastPushAt: new Date().toISOString(),
+                lastPushAction: action,
+                lastPushStatus: 'skipped',
+                lastPushError: message
+            });
+            const error = new Error(message);
+            error.code = chronology.issue;
+            return { ok: false, skipped: true, invalidChronology: true, error };
+        }
         if (data !== undefined && data !== null) requestBody.data = data;
         if (localId !== undefined && localId !== null && localId !== '') requestBody.local_id = localId;
         const res = await fetch(`${baseUrl}/logs/sync`, {
@@ -598,6 +675,26 @@ async function syncToLocalApi(action, data, localId = null, options = {}) {
 }
 
 // Bekleyen senkronizasyonları işle
+const MAX_SYNC_RETRIES = 5;
+
+function notifyDroppedItem(item, target) {
+    console.warn(`Sync item dropped after ${MAX_SYNC_RETRIES} retries [${target}]:`, item?.action, item?.data?.created_at || item?.localId);
+    try {
+        window.dispatchEvent(new CustomEvent('sync-item-dropped', {
+            detail: { action: item?.action, localId: item?.localId, target, retries: item?.retries }
+        }));
+    } catch (_) { /* ignore */ }
+}
+
+function notifyInvalidChronologyItem(item, target, message) {
+    console.warn(`Sync item dropped due to invalid chronology [${target}]:`, item?.action, item?.data?.created_at || item?.localId, message || '');
+    try {
+        window.dispatchEvent(new CustomEvent('sync-item-dropped', {
+            detail: { action: item?.action, localId: item?.localId, target, reason: 'invalid_chronology' }
+        }));
+    } catch (_) { /* ignore */ }
+}
+
 async function processSyncQueue() {
     try {
         if (!shouldSyncToSupabase()) return;
@@ -607,6 +704,7 @@ async function processSyncQueue() {
 
         const newQueue = [];
         for (const item of queue) {
+            const retries = (item.retries || 0);
             try {
                 const result = await syncToSupabase(item.action, item.data, item.localId, { fromQueue: true });
                 if (!result?.ok) {
@@ -614,15 +712,21 @@ async function processSyncQueue() {
                         newQueue.push(item);
                         continue;
                     }
-                    // 3 denemeden fazla olmayanları yeniden kuyruğa ekle
-                    if (!item.retries || item.retries < 3) {
-                        newQueue.push({ ...item, retries: (item.retries || 0) + 1 });
+                    if (result?.invalidChronology) {
+                        notifyInvalidChronologyItem(item, 'supabase', result?.error?.message || null);
+                        continue;
+                    }
+                    if (retries + 1 < MAX_SYNC_RETRIES) {
+                        newQueue.push({ ...item, retries: retries + 1 });
+                    } else {
+                        notifyDroppedItem(item, 'supabase');
                     }
                 }
             } catch (e) {
-                // 3 denemeden fazla olmayanları yeniden kuyruğa ekle
-                if (!item.retries || item.retries < 3) {
-                    newQueue.push({ ...item, retries: (item.retries || 0) + 1 });
+                if (retries + 1 < MAX_SYNC_RETRIES) {
+                    newQueue.push({ ...item, retries: retries + 1 });
+                } else {
+                    notifyDroppedItem(item, 'supabase');
                 }
             }
         }
@@ -642,6 +746,7 @@ async function processLocalSyncQueue() {
 
         const newQueue = [];
         for (const item of queue) {
+            const retries = (item.retries || 0);
             try {
                 const result = await syncToLocalApi(item.action, item.data, item.localId, { fromQueue: true });
                 if (!result?.ok) {
@@ -649,13 +754,21 @@ async function processLocalSyncQueue() {
                         newQueue.push(item);
                         continue;
                     }
-                    if (!item.retries || item.retries < 3) {
-                        newQueue.push({ ...item, retries: (item.retries || 0) + 1 });
+                    if (result?.invalidChronology) {
+                        notifyInvalidChronologyItem(item, 'localApi', result?.error?.message || null);
+                        continue;
+                    }
+                    if (retries + 1 < MAX_SYNC_RETRIES) {
+                        newQueue.push({ ...item, retries: retries + 1 });
+                    } else {
+                        notifyDroppedItem(item, 'localApi');
                     }
                 }
             } catch (e) {
-                if (!item.retries || item.retries < 3) {
-                    newQueue.push({ ...item, retries: (item.retries || 0) + 1 });
+                if (retries + 1 < MAX_SYNC_RETRIES) {
+                    newQueue.push({ ...item, retries: retries + 1 });
+                } else {
+                    notifyDroppedItem(item, 'localApi');
                 }
             }
         }
@@ -669,8 +782,54 @@ async function processLocalSyncQueue() {
 
 // Electron ortamında SQLite kullan + Supabase senkronizasyonu
 
+function unwrapElectronDbResult(result, context = 'electron-db') {
+    if (result && typeof result === 'object' && result.__ipcError) {
+        const error = new Error(result.error || `${context} failed`);
+        error.code = 'ELECTRON_DB_IPC_ERROR';
+        if (result.channel) error.channel = result.channel;
+        throw error;
+    }
+    return result;
+}
+
+async function callElectronDb(method, ...args) {
+    const fn = window?.electronAPI?.db?.[method];
+    if (typeof fn !== 'function') {
+        throw new Error(`electronAPI.db.${method} kullanilamadi`);
+    }
+    const result = await fn(...args);
+    return unwrapElectronDbResult(result, method);
+}
+
 // Supabase'den verileri çek (Electron -> local SQLite)
-async function syncFromSupabase() {
+async function getElectronLocalSyncSnapshot() {
+    if (!isElectron || !window?.electronAPI?.db) {
+        return { count: null, latestCreatedAt: null };
+    }
+
+    try {
+        const [count, latestLogs] = await Promise.all([
+            typeof window.electronAPI.db.getLogsCount === 'function'
+                ? callElectronDb('getLogsCount')
+                : Promise.resolve(null),
+            typeof window.electronAPI.db.getAllLogs === 'function'
+                ? callElectronDb('getAllLogs', 1)
+                : Promise.resolve([])
+        ]);
+
+        return {
+            count: Number.isFinite(Number(count)) ? Number(count) : null,
+            latestCreatedAt: Array.isArray(latestLogs) && latestLogs.length > 0
+                ? latestLogs[0]?.created_at || null
+                : null
+        };
+    } catch (e) {
+        console.error('Electron local sync snapshot error:', e);
+        return { count: null, latestCreatedAt: null };
+    }
+}
+
+async function syncFromSupabase(options = {}) {
     if (!isElectron) return { ok: false, skipped: true };
     if (!shouldSyncToSupabase()) return { ok: false, skipped: true };
     if (supabasePullInProgress) return { ok: false, skipped: true };
@@ -678,12 +837,15 @@ async function syncFromSupabase() {
         return { ok: false, offline: true };
     }
 
+    const forceFull = Boolean(options?.forceFull);
     supabasePullInProgress = true;
     try {
         await processSyncQueue();
 
         const lookbackMs = PULL_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
         const since = new Date(Date.now() - lookbackMs).toISOString();
+        const recentWindowFloor = new Date(Date.now() - (DELTA_SYNC_BOOTSTRAP_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+        const recentWindowCursor = new Date(Date.parse(recentWindowFloor) - 1000).toISOString();
 
         const baseSelect = 'id, created_at, exit_at, type, sub_category, shift, plate, driver, name, host, note, location, entry_location, exit_location, seal_number, seal_number_entry, seal_number_exit, tc_no, phone, user_email';
         const baseSelectLegacy = 'id, created_at, exit_at, type, sub_category, shift, plate, driver, name, host, note, location, seal_number, seal_number_entry, seal_number_exit, tc_no, phone, user_email';
@@ -744,7 +906,7 @@ async function syncFromSupabase() {
         // 1) Önce lokalde "içeride" görünen kayıtları Supabase'den tazele (çıkış yapılmış olabilir).
         // created_at çok eski olsa bile yakalamak için "in(created_at, ...)" kullanır.
         try {
-            const activeLocal = await window.electronAPI.db.getActiveLogs();
+            const activeLocal = await callElectronDb('getActiveLogs');
             const createdAtList = Array.from(
                 new Set((activeLocal || []).map((l) => l?.created_at).filter(Boolean))
             );
@@ -761,7 +923,7 @@ async function syncFromSupabase() {
 
                 if (data && data.length > 0) {
                     for (const row of data) {
-                        await window.electronAPI.db.upsertLogByCreatedAt(row);
+                        await callElectronDb('upsertLogByCreatedAt', row);
                     }
                 }
             }
@@ -772,8 +934,48 @@ async function syncFromSupabase() {
 
         // 2) Incremental + pagination (2000 limiti nedeniyle tek seferde takılmasın).
         const currentStatus = readSyncStatus();
-        let cursor = currentStatus?.lastPullCursorCreatedAt || null;
-        if (cursor && cursor < since) cursor = null; // lookback penceresinin dışına taşmasın
+        const localSnapshot = await getElectronLocalSyncSnapshot();
+        const latestLocalCreatedAt = normalizeIsoDate(localSnapshot?.latestCreatedAt);
+        const boundedLatestLocalCursor = latestLocalCreatedAt && latestLocalCreatedAt > recentWindowFloor
+            ? latestLocalCreatedAt
+            : recentWindowCursor;
+        let cursor = forceFull ? recentWindowCursor : currentStatus?.lastPullCursorCreatedAt || null;
+        let pullMode = forceFull ? 'limited_full' : 'incremental';
+        let bootstrapReason = forceFull ? 'manual_force_full_recent_window' : null;
+
+        if (localSnapshot?.count === 0) {
+            cursor = recentWindowCursor;
+            pullMode = 'limited_full';
+            bootstrapReason = 'local_db_empty_recent_window';
+        } else if (!cursor && latestLocalCreatedAt) {
+            cursor = boundedLatestLocalCursor;
+            pullMode = boundedLatestLocalCursor === latestLocalCreatedAt ? 'delta' : 'limited_full';
+            bootstrapReason = boundedLatestLocalCursor === latestLocalCreatedAt
+                ? 'latest_local_created_at'
+                : 'latest_local_outside_recent_window';
+        } else if (!cursor) {
+            cursor = recentWindowCursor;
+            pullMode = 'limited_full';
+            bootstrapReason = 'missing_cursor_recent_window';
+        } else if (latestLocalCreatedAt) {
+            const cursorMs = Date.parse(cursor);
+            const latestLocalMs = Date.parse(latestLocalCreatedAt);
+
+            if (Number.isFinite(cursorMs) && Number.isFinite(latestLocalMs) && cursorMs - latestLocalMs > 60000) {
+                cursor = boundedLatestLocalCursor;
+                pullMode = boundedLatestLocalCursor === latestLocalCreatedAt ? 'delta' : 'limited_full';
+                bootstrapReason = 'cursor_ahead_of_local_db';
+            }
+        }
+        if (cursor && cursor < since) {
+            cursor = latestLocalCreatedAt && latestLocalCreatedAt > since ? latestLocalCreatedAt : since;
+            if (!bootstrapReason) {
+                bootstrapReason = 'lookback_floor';
+            }
+        }
+        if (bootstrapReason) {
+            writeSyncStatus({ lastPullBootstrapReason: bootstrapReason });
+        }
 
         let totalCount = 0;
         let pages = 0;
@@ -789,7 +991,7 @@ async function syncFromSupabase() {
 
             if (data && data.length > 0) {
                 for (const row of data) {
-                    await window.electronAPI.db.upsertLogByCreatedAt(row);
+                    await callElectronDb('upsertLogByCreatedAt', row);
                 }
                 cursor = data[data.length - 1]?.created_at || cursor;
                 totalCount += data.length;
@@ -806,7 +1008,9 @@ async function syncFromSupabase() {
             lastPullError: null,
             lastPullCount: totalCount,
             lastPullPages: pages,
-            lastPullCursorCreatedAt: cursor || null
+            lastPullCursorCreatedAt: cursor || null,
+            lastPullMode: pullMode,
+            lastPullBootstrapReason: bootstrapReason
         });
         return { ok: true, count: totalCount, pages, cursor: cursor || null };
     } catch (e) {
@@ -853,7 +1057,7 @@ async function syncFromLocalApi() {
 
             if (rows.length > 0) {
                 for (const row of rows) {
-                    await window.electronAPI.db.upsertLogByCreatedAt(row);
+                    await callElectronDb('upsertLogByCreatedAt', row);
                 }
                 cursor = rows[rows.length - 1]?.created_at || cursor;
                 totalCount += rows.length;
@@ -898,19 +1102,29 @@ async function exportLocalLogsToSupabase(options = {}) {
     let total = 0;
     let processed = 0;
     let pages = 0;
+    let skippedInvalid = 0;
     let lastError = null;
 
     try {
-        total = await window.electronAPI.db.getLogsCount();
+        total = await callElectronDb('getLogsCount');
         writeSyncStatus({ lastBulkExportAt: new Date().toISOString(), lastBulkExportStatus: 'attempt', lastBulkExportError: null });
 
         for (let offset = 0; offset < total; offset += pageSize) {
-            const rows = await window.electronAPI.db.getLogsPage(pageSize, offset);
+            const rows = await callElectronDb('getLogsPage', pageSize, offset);
             if (!rows || rows.length === 0) break;
 
-            let payload = rows
-                .map((row) => pickSupabaseLogFields(row))
-                .filter((row) => row?.created_at);
+            let payload = [];
+            for (const sourceRow of rows) {
+                const row = pickSupabaseLogFields(sourceRow);
+                if (!row?.created_at) continue;
+                const chronology = validateChronology(row);
+                if (chronology.issue) {
+                    skippedInvalid += 1;
+                    console.warn('[sync.bulk_export] chronology anomaly skipped:', chronology.issue, row.plate || row.name || row.created_at);
+                    continue;
+                }
+                payload.push(row);
+            }
 
             if (payload.length > 0) {
                 const uniqueMap = new Map();
@@ -967,44 +1181,44 @@ async function exportLocalLogsToSupabase(options = {}) {
         writeSyncStatus({
             lastBulkExportAt: new Date().toISOString(),
             lastBulkExportStatus: lastError ? 'error' : 'ok',
-            lastBulkExportError: lastError ? (lastError.message || String(lastError)) : null
+            lastBulkExportError: lastError ? (lastError.message || String(lastError)) : (skippedInvalid > 0 ? `${skippedInvalid} geçersiz kayıt atlandı.` : null)
         });
 
-        return { ok: !lastError, total, processed, pages, error: lastError };
+        return { ok: !lastError, total, processed, pages, skippedInvalid, error: lastError };
     } catch (e) {
         writeSyncStatus({
             lastBulkExportAt: new Date().toISOString(),
             lastBulkExportStatus: 'error',
             lastBulkExportError: e?.message || String(e)
         });
-        return { ok: false, total, processed, pages, error: e };
+        return { ok: false, total, processed, pages, skippedInvalid, error: e };
     }
 }
 
 const electronDB = {
     async getActiveLogs() {
-        return await window.electronAPI.db.getActiveLogs();
+        return await callElectronDb('getActiveLogs');
     },
 
     async getLogById(id) {
         if (window?.electronAPI?.db?.getLogById) {
-            return await window.electronAPI.db.getLogById(id);
+            return await callElectronDb('getLogById', id);
         }
         const logs = await this.getAllLogs();
         return logs.find((log) => log.id === id) || null;
     },
 
     async getAllLogs(limit = 1000) {
-        return await window.electronAPI.db.getAllLogs(limit);
+        return await callElectronDb('getAllLogs', limit);
     },
 
     async getLogsByDateRange(dateFrom, dateTo) {
-        return await window.electronAPI.db.getLogsByDateRange(dateFrom, dateTo);
+        return await callElectronDb('getLogsByDateRange', dateFrom, dateTo);
     },
 
     async insertLog(logData) {
         // Önce yerel SQLite'a kaydet
-        const result = await window.electronAPI.db.insertLog(logData);
+        const result = await callElectronDb('insertLog', logData);
 
         // Sonra Supabase'e senkronize et (arka planda)
         syncToSupabase('INSERT', { ...logData, created_at: result.created_at || logData.created_at }, result.id);
@@ -1018,7 +1232,7 @@ const electronDB = {
         // Önce güncellenecek kaydı bul (created_at için)
         const existingLog = await this.getLogById(id);
 
-        const result = await window.electronAPI.db.updateLog(id, updateData);
+        const result = await callElectronDb('updateLog', id, updateData);
 
         // Supabase'e senkronize et
         if (existingLog) {
@@ -1032,24 +1246,32 @@ const electronDB = {
     async exitLog(id, exitData = {}) {
         // Önce çıkış yapılacak kaydı bul
         const existingLog = await this.getLogById(id);
-
-        const result = await window.electronAPI.db.exitLog(id, exitData);
-
-        // Supabase'e senkronize et
-        if (existingLog) {
-            syncToSupabase('EXIT', {
-                plate: existingLog.plate,
-                name: existingLog.name,
-                exit_at: new Date().toISOString(),
-                extraData: exitData
-            }, existingLog.created_at);
-            syncToLocalApi('EXIT', {
-                plate: existingLog.plate,
-                name: existingLog.name,
-                exit_at: new Date().toISOString(),
-                extraData: exitData
-            }, existingLog.created_at);
+        if (!existingLog) {
+            throw new Error('Çıkış yapılacak kayıt bulunamadı.');
         }
+        if (existingLog.exit_at) {
+            throw new Error('Bu kayıt zaten çıkış yapmış görünüyor.');
+        }
+        const exitTimestamp = new Date().toISOString();
+
+        const result = await callElectronDb('exitLog', id, { ...exitData, exit_at: exitTimestamp });
+        if (!result) {
+            throw new Error('Çıkış işlemi veritabanında tamamlanamadı. Kayıt güncel olmayabilir, listeyi yenileyin.');
+        }
+
+        // Supabase'e senkronize et (aynı timestamp kullan)
+        syncToSupabase('EXIT', {
+            plate: existingLog.plate,
+            name: existingLog.name,
+            exit_at: exitTimestamp,
+            extraData: exitData
+        }, existingLog.created_at);
+        syncToLocalApi('EXIT', {
+            plate: existingLog.plate,
+            name: existingLog.name,
+            exit_at: exitTimestamp,
+            extraData: exitData
+        }, existingLog.created_at);
 
         return result;
     },
@@ -1058,7 +1280,7 @@ const electronDB = {
         // Önce silinecek kaydı bul
         const existingLog = await this.getLogById(id);
 
-        const result = await window.electronAPI.db.deleteLog(id);
+        const result = await callElectronDb('deleteLog', id);
 
         // Supabase'e senkronize et
         if (existingLog) {
@@ -1070,19 +1292,19 @@ const electronDB = {
     },
 
     async searchLogs(searchTerm, limit = 100) {
-        return await window.electronAPI.db.searchLogs(searchTerm, limit);
+        return await callElectronDb('searchLogs', searchTerm, limit);
     },
 
     async getStats() {
-        return await window.electronAPI.db.getStats();
+        return await callElectronDb('getStats');
     },
 
     async setSetting(key, value) {
-        return await window.electronAPI.db.setSetting(key, value);
+        return await callElectronDb('setSetting', key, value);
     },
 
     async getSetting(key) {
-        return await window.electronAPI.db.getSetting(key);
+        return await callElectronDb('getSetting', key);
     }
 };
 
@@ -1126,6 +1348,11 @@ const webDB = {
         }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     },
 
+    async getLogById(id) {
+        const logs = this._getLogs();
+        return logs.find(log => log.id === id) || null;
+    },
+
     async insertLog(logData) {
         const logs = this._getLogs();
         const newLog = {
@@ -1133,6 +1360,10 @@ const webDB = {
             ...logData,
             created_at: logData.created_at || new Date().toISOString()
         };
+        const chronology = validateChronology(newLog);
+        if (chronology.issue) {
+            throw new Error(chronology.message);
+        }
         logs.unshift(newLog);
         this._saveLogs(logs);
 
@@ -1151,6 +1382,14 @@ const webDB = {
         const index = logs.findIndex(log => log.id === id);
         if (index !== -1) {
             const existingLog = logs[index];
+            const chronology = validateChronology(
+                updateData || {},
+                updateData?.created_at ?? existingLog.created_at,
+                updateData?.exit_at !== undefined ? updateData.exit_at : existingLog.exit_at
+            );
+            if (chronology.issue) {
+                throw new Error(chronology.message);
+            }
             logs[index] = { ...logs[index], ...updateData };
             this._saveLogs(logs);
 
@@ -1164,25 +1403,32 @@ const webDB = {
     },
 
     async exitLog(id, exitData = {}) {
-        const logs = this._getLogs();
-        const existingLog = logs.find(log => log.id === id);
-        const result = await this.updateLog(id, { exit_at: new Date().toISOString(), ...exitData });
-
-        // Supabase'e EXIT senkronizasyonu
-        if (existingLog) {
-            syncToSupabase('EXIT', {
-                plate: existingLog.plate,
-                name: existingLog.name,
-                exit_at: new Date().toISOString(),
-                extraData: exitData
-            }, existingLog.created_at);
-            syncToLocalApi('EXIT', {
-                plate: existingLog.plate,
-                name: existingLog.name,
-                exit_at: new Date().toISOString(),
-                extraData: exitData
-            }, existingLog.created_at);
+        const existingLog = await this.getLogById(id);
+        if (!existingLog) {
+            throw new Error('Çıkış yapılacak kayıt bulunamadı.');
         }
+        if (existingLog.exit_at) {
+            throw new Error('Bu kayıt zaten çıkış yapmış görünüyor.');
+        }
+        const exitTimestamp = new Date().toISOString();
+        const result = await this.updateLog(id, { exit_at: exitTimestamp, ...exitData });
+        if (!result) {
+            throw new Error('Çıkış işlemi veritabanında tamamlanamadı. Kayıt güncel olmayabilir, listeyi yenileyin.');
+        }
+
+        // Supabase'e EXIT senkronizasyonu (aynı timestamp kullan)
+        syncToSupabase('EXIT', {
+            plate: existingLog.plate,
+            name: existingLog.name,
+            exit_at: exitTimestamp,
+            extraData: exitData
+        }, existingLog.created_at);
+        syncToLocalApi('EXIT', {
+            plate: existingLog.plate,
+            name: existingLog.name,
+            exit_at: exitTimestamp,
+            extraData: exitData
+        }, existingLog.created_at);
 
         return result;
     },
@@ -1194,6 +1440,7 @@ const webDB = {
         if (filtered.length !== logs.length) {
             this._saveLogs(filtered);
             if (existingLog) {
+                syncToSupabase('DELETE', null, existingLog.created_at);
                 syncToLocalApi('DELETE', null, existingLog.created_at);
             }
             return true;
@@ -1245,6 +1492,11 @@ const webDB = {
 // Doğru API'yi seç
 const db = isElectron ? electronDB : webDB;
 
+// Interval ID'leri modül seviyesinde — tekrar çağrıda temizlenir (memory leak önleme)
+let _syncQueueIntervalId = null;
+let _supabasePullIntervalId = null;
+let _localPullIntervalId = null;
+
 // Uygulama başladığında bekleyen senkronizasyonları işle
 if (typeof window !== 'undefined') {
     // 5 saniyelik gecikme ile başlat
@@ -1253,24 +1505,57 @@ if (typeof window !== 'undefined') {
         processLocalSyncQueue();
     }, 5000);
 
-    // Her 30 saniyede bir kontrol et
-
-    setInterval(() => {
+    // Her 30 saniyede bir kontrol et (önceki interval varsa temizle)
+    if (_syncQueueIntervalId) clearInterval(_syncQueueIntervalId);
+    _syncQueueIntervalId = setInterval(() => {
         processSyncQueue();
         processLocalSyncQueue();
     }, 30000);
 
-    if (isElectron) {
+    // Online olunca hemen queue işle (B3)
+    window.addEventListener('online', () => {
         setTimeout(() => {
-            syncFromSupabase();
-            syncFromLocalApi();
-        }, 8000);
+            processSyncQueue();
+            processLocalSyncQueue();
+        }, 1000);
+    });
 
-        setInterval(() => {
-            syncFromSupabase();
+    if (isElectron) {
+        // İlk başlatmada: DB boşsa hemen full sync, değilse kısa gecikme ile incremental
+        setTimeout(async () => {
+            try {
+                const snapshot = await getElectronLocalSyncSnapshot();
+                const isEmpty = !snapshot?.count || snapshot.count === 0;
+
+                if (isEmpty) {
+                    // Yeni kurulum — hemen full sync başlat, UI'a bildir
+                    window.dispatchEvent(new CustomEvent('supabase-sync-start', {
+                        detail: { mode: 'full', reason: 'first_launch' }
+                    }));
+                }
+
+                const result = await syncFromSupabase(isEmpty ? { forceFull: true } : {});
+                if (result?.ok) {
+                    window.dispatchEvent(new CustomEvent('supabase-sync-done', {
+                        detail: { ...result, firstLaunch: isEmpty }
+                    }));
+                }
+                syncFromLocalApi();
+            } catch (e) {
+                console.error('Initial sync error:', e);
+            }
+        }, 2000);
+
+        if (_supabasePullIntervalId) clearInterval(_supabasePullIntervalId);
+        _supabasePullIntervalId = setInterval(async () => {
+            const result = await syncFromSupabase();
+            if (result?.ok && result?.count > 0) {
+                window.dispatchEvent(new CustomEvent('supabase-sync-done', { detail: result }));
+            }
         }, ELECTRON_SUPABASE_PULL_INTERVAL_MS);
 
-        setInterval(() => {
+        if (_localPullIntervalId) clearInterval(_localPullIntervalId);
+        _localPullIntervalId = setInterval(() => {
             syncFromLocalApi();
         }, LOCAL_PULL_INTERVAL_MS);
     }

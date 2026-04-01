@@ -5,9 +5,8 @@ import {
   Trash2, BarChart3, Calendar, Filter, Phone, TrendingUp, Users, Activity, PieChart, History, Timer, AlertCircle, ArrowRightCircle, ArrowLeftCircle,
   CalendarClock, Mail, Volume2, VolumeX, Zap, Star, Send, RotateCcw, Folder, Upload
 } from 'lucide-react';
-import { supabase, supabaseUrl } from './supabaseClient';
+import { supabase } from './supabaseClient';
 import { db as dbClient, isElectron, isMobile, processSyncQueue, processLocalSyncQueue, syncFromSupabase, syncFromLocalApi, exportLocalLogsToSupabase, getSyncStatus } from './dbClient';
-import * as XLSX from 'xlsx';
 
 // --- MODÜLER İMPORTLAR ---
 import {
@@ -17,23 +16,28 @@ import {
   SHOW_HISTORY_PANEL_KEY, LITE_MODE_KEY, LITE_MODE_OVERRIDE_KEY, FEATURE_FLAGS_KEY, ATTACHMENTS_SETTINGS_KEY,
   SUPABASE_SYNC_QUEUE_KEY, LOCAL_SYNC_QUEUE_KEY, MAX_ATTACHMENTS_PER_LOG,
   MAX_ATTACHMENT_SIZE_BYTES, REPORT_RENDER_LIMIT_NORMAL, REPORT_PAGE_SIZE_NORMAL,
-  REPORT_PAGE_SIZE_LITE, DIRECTION_ENTRY, DIRECTION_EXIT, DEFAULT_FEATURE_FLAGS,
+  REPORT_PAGE_SIZE_LITE, DIRECTION_ENTRY, DIRECTION_EXIT, DEFAULT_FEATURE_FLAGS, FORCE_LITE_MODE,
   ROLE_SECURITY, ROLE_HR, ROLE_DEVELOPER, ROLE_FALLBACK_PASSWORDS, LOGIN_ROLE_OPTIONS,
 } from './lib/constants';
 import {
   cx, sanitizeInput, normalizeFeatureFlags, humanFileSize,
   upperTr, lowerTr, normalizeIdentifier, isSameIdentifier,
   isValidTC, formatPhone, formatForInput, toDateOnly, calculateWaitTime,
+  getChronologyIssue, calculateStayMinutes,
+  formatTrDate, formatTrTime, formatTrDateTime,
   getCategoryStyle, getShortCategory, resolveRoleByAlias,
   buildFallbackSessionUser, createAttachmentId, normalizeAttachmentItem,
   normalizeAttachmentMap, getLogAttachmentKey, readFileAsDataUrl, downloadDataUrl,
   labelClass, getEntryLocation, getExitLocation, buildLegacyLocationValue, formatLogLocation,
-  areObjectsEqual, normalizeLogText, normalizeLogList, areLogListsEqual, upsertLogInList,
+  areObjectsEqual, normalizeLogText, normalizeLogList, areLogListsEqual, upsertLogInList, matchesByTab,
   needsPlainCsvFallback, parseCsvTextLoose, pickSupabaseCompatibleLog,
 } from './lib/utils';
 import { buildAuditHash, verifyAuditChain } from './lib/audit-utils';
+import { buildExitOptionLabel, getExitCandidates, resolveExitRecord } from './lib/exit-utils';
+import { withSingleFlight } from './lib/async-guards';
+import { getLogBindingId, resolveOfflineSyncAction } from './lib/log-sync-utils';
 import {
-  mapCsvRowToLog,
+  mapCsvRowToImportRecord,
   dedupeLogsByCreatedAt, upsertChunkWithRetry,
 } from './lib/csv-utils';
 import {
@@ -46,6 +50,74 @@ import { Button, Card, FormField, TableHeadCell, Toast, ConfirmModal, SubTabBtn,
 // --- LOGO İÇE AKTARMA ---
 import logoImg from './logo.png';
 
+function createEmptyAdvancedReport() {
+  return {
+    total: 0,
+    insideCount: 0,
+    exitedCount: 0,
+    avgStayMins: 0,
+    topHosts: [],
+    hourly: [],
+    busiestHour: { hour: 0, count: 0 }
+  };
+}
+
+function createEmptyDetailedStats() {
+  return {
+    recentCount: 0,
+    recentEntries: 0,
+    recentExits: 0,
+    categoryBreakdown: {},
+    shiftBreakdown: {
+      'Vardiya 1 (08:00-16:00)': 0,
+      'Vardiya 2 (16:00-00:00)': 0,
+      'Vardiya 3 (00:00-08:00)': 0
+    },
+    avgWaitMinutes: 0,
+    completedCount: 0
+  };
+}
+
+function createEmptyHostPresetDraft() {
+  return {
+    name: '',
+    sort_order: 0,
+    is_active: true,
+  };
+}
+
+function createEmptyVehiclePresetDraft() {
+  return {
+    plate: '',
+    label: '',
+    category: 'management',
+    default_driver_type: 'owner',
+    sort_order: 0,
+    is_active: true,
+  };
+}
+
+function buildFallbackVehiclePresets() {
+  return MANAGEMENT_VEHICLES.map((entry, index) => {
+    const [platePart, labelPart] = String(entry || '').split(' - ');
+    const normalized = upperTr(entry || '');
+    const category = normalized.includes('ŞİRKET') || normalized.includes('HAVUZ') ? 'company' : 'management';
+    const defaultDriverType = category === 'management' ? 'owner' : 'other';
+    const plate = (platePart || '').trim().toUpperCase();
+    const label = (labelPart || '').trim();
+    return {
+      id: `fallback-vehicle-${index}`,
+      plate,
+      label,
+      display_name: [plate, label].filter(Boolean).join(' - '),
+      category,
+      default_driver_type: defaultDriverType,
+      sort_order: index + 1,
+      is_active: true,
+    };
+  });
+}
+
 // === MAIN APP COMPONENT ===
 export default function App() {
   // --- STATE TANIMLARI ---
@@ -56,11 +128,12 @@ export default function App() {
   const [actionLoading, setActionLoading] = useState(null);
   const [notification, setNotification] = useState(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [supabaseDebug, setSupabaseDebug] = useState({ lastError: null, lastCheckedAt: null });
+  const [_supabaseDebug, setSupabaseDebug] = useState({ lastError: null, lastCheckedAt: null }); // eslint-disable-line no-unused-vars
   const [searchTerm, setSearchTerm] = useState('');
   const [activeSearchTerm, setActiveSearchTerm] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
   const [syncStatus, setSyncStatus] = useState(() => getSyncStatus());
+  const [initialSyncState, setInitialSyncState] = useState({ active: false, done: false, count: 0 });
   const [bulkExportState, setBulkExportState] = useState({ running: false, processed: 0, total: 0, lastError: null });
   const [showSyncPanel, setShowSyncPanel] = useState(() => {
     try {
@@ -87,6 +160,7 @@ export default function App() {
     }
   });
   const [liteMode, setLiteMode] = useState(() => {
+    if (FORCE_LITE_MODE) return true;
     const manualOverride = localStorage.getItem(LITE_MODE_OVERRIDE_KEY);
     if (manualOverride !== null) return manualOverride === '1';
     const savedRole = localStorage.getItem(ACTIVE_ROLE_KEY);
@@ -230,6 +304,7 @@ export default function App() {
   const [importProgress, setImportProgress] = useState({ processed: 0, total: 0 });
   const [importResult, setImportResult] = useState(null);
   const [importError, setImportError] = useState('');
+  const [importWarnings, setImportWarnings] = useState([]);
   const [plateHistory, setPlateHistory] = useState(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -244,6 +319,50 @@ export default function App() {
   const [hrTab, setHrTab] = useState('attendance');
   const [hrLoading, setHrLoading] = useState(false);
   const [hrError, setHrError] = useState('');
+  const [people, setPeople] = useState([]);
+  const [personQuery, setPersonQuery] = useState('');
+  const [personDraft, setPersonDraft] = useState({
+    kind: 'employee',
+    full_name: '',
+    tc_no: '',
+    phone: '',
+    is_active: true,
+  });
+  const [badgeRecords, setBadgeRecords] = useState([]);
+  const [badgeQuery, setBadgeQuery] = useState('');
+  const [badgeDraft, setBadgeDraft] = useState({
+    person: '',
+    kind: 'card',
+    code: '',
+    is_active: true,
+  });
+  const [editingPerson, setEditingPerson] = useState(null);
+  const [personEditDraft, setPersonEditDraft] = useState({
+    kind: 'employee',
+    full_name: '',
+    tc_no: '',
+    phone: '',
+    is_active: true,
+  });
+  const [editingBadge, setEditingBadge] = useState(null);
+  const [badgeEditDraft, setBadgeEditDraft] = useState({
+    person: '',
+    kind: 'card',
+    code: '',
+    is_active: true,
+  });
+  const [hostPresetRecords, setHostPresetRecords] = useState([]);
+  const [hostPresetQuery, setHostPresetQuery] = useState('');
+  const [hostPresetsLoaded, setHostPresetsLoaded] = useState(false);
+  const [hostPresetDraft, setHostPresetDraft] = useState(() => createEmptyHostPresetDraft());
+  const [editingHostPreset, setEditingHostPreset] = useState(null);
+  const [hostPresetEditDraft, setHostPresetEditDraft] = useState(() => createEmptyHostPresetDraft());
+  const [vehiclePresetRecords, setVehiclePresetRecords] = useState([]);
+  const [vehiclePresetQuery, setVehiclePresetQuery] = useState('');
+  const [vehiclePresetsLoaded, setVehiclePresetsLoaded] = useState(false);
+  const [vehiclePresetDraft, setVehiclePresetDraft] = useState(() => createEmptyVehiclePresetDraft());
+  const [editingVehiclePreset, setEditingVehiclePreset] = useState(null);
+  const [vehiclePresetEditDraft, setVehiclePresetEditDraft] = useState(() => createEmptyVehiclePresetDraft());
   const [absenceTypes, setAbsenceTypes] = useState([]);
   const [absenceTypeDraft, setAbsenceTypeDraft] = useState({
     name: '',
@@ -352,6 +471,7 @@ export default function App() {
   const [vehicleSubTab, setVehicleSubTab] = useState('guest');
   const [visitorSubTab, setVisitorSubTab] = useState('guest');
   const [formData, setFormData] = useState({ plate: '', driver: '', driver_type: 'owner', name: '', host: '', note: '', entry_location: '', exit_location: '', seal_number_entry: '', seal_number_exit: '', tc_no: '', phone: '' });
+  const [selectedExitLogId, setSelectedExitLogId] = useState('');
   const [editingLog, setEditingLog] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [email, setEmail] = useState('');
@@ -373,6 +493,8 @@ export default function App() {
   const fetchIntervalRef = useRef(null);
   const fetchInFlightRef = useRef(false);
   const queuedFetchRef = useRef(false);
+  const exitInFlightIdsRef = useRef(new Set());
+  const entryInFlightRef = useRef(new Set());
 
   // Debounced values
   const debouncedActiveSearchTerm = useDebounce(activeSearchTerm, 300);
@@ -390,6 +512,34 @@ export default function App() {
     if (!/^https?:\/\//i.test(v)) return 'URL http:// veya https:// ile baslamali.';
     return '';
   }, [updateUrl]);
+
+  const exitCandidates = useMemo(() => getExitCandidates(activeLogs, mainTab), [activeLogs, mainTab]);
+  const selectedExitLog = useMemo(
+    () => exitCandidates.find((log) => (
+      getLogBindingId(log) === String(selectedExitLogId)
+      || String(log.id || '') === String(selectedExitLogId)
+    )) || null,
+    [exitCandidates, selectedExitLogId]
+  );
+
+  useEffect(() => {
+    if (!selectedExitLogId) return;
+    const stillActive = exitCandidates.some((log) => (
+      getLogBindingId(log) === String(selectedExitLogId)
+      || String(log.id || '') === String(selectedExitLogId)
+    ));
+    if (!stillActive) {
+      setSelectedExitLogId('');
+    }
+  }, [exitCandidates, selectedExitLogId]);
+
+  useEffect(() => {
+    if (!isExitDirection) return;
+    if (selectedExitLogId) return;
+    if (exitCandidates.length === 1) {
+      setSelectedExitLogId(getLogBindingId(exitCandidates[0]) || String(exitCandidates[0].id || ''));
+    }
+  }, [isExitDirection, selectedExitLogId, exitCandidates]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -429,6 +579,18 @@ export default function App() {
   }, []);
 
   const closeToast = useCallback(() => setNotification(null), []);
+  const loadXlsx = useCallback(async () => {
+    const module = await import('xlsx');
+    return module.default || module;
+  }, []);
+  const unwrapElectronDbResult = useCallback((result, context = 'electron-db') => {
+    if (result && typeof result === 'object' && result.__ipcError) {
+      const error = new Error(result.error || `${context} hatasi`);
+      if (result.channel) error.channel = result.channel;
+      throw error;
+    }
+    return result;
+  }, []);
 
   const persistFeatureFlags = useCallback((nextFlags) => {
     const normalized = normalizeFeatureFlags(nextFlags);
@@ -840,7 +1002,9 @@ export default function App() {
   const toggleReportSort = useCallback((key) => {
     setReportSort((prev) => {
       if (prev.key === key) return { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
-      return { key, dir: 'asc' };
+      // Tarih kolonları için varsayılan yön: en yeni üstte (desc)
+      const defaultDesc = key === 'created_at' || key === 'exit_at';
+      return { key, dir: defaultDesc ? 'desc' : 'asc' };
     });
   }, []);
 
@@ -881,7 +1045,7 @@ export default function App() {
     if (!iso) return '-';
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '-';
-    return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return formatTrTime(d, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }, []);
 
   const setLogsIfChanged = useCallback((activeRows, allRows) => {
@@ -930,6 +1094,7 @@ export default function App() {
     const [buffer, text] = await Promise.all([file.arrayBuffer(), file.text()]);
     let rows = [];
     try {
+      const XLSX = await loadXlsx();
       const workbook = XLSX.read(buffer, { type: 'array', raw: true, cellDates: true });
       const sheet = workbook?.Sheets?.[workbook?.SheetNames?.[0]];
       rows = sheet
@@ -945,7 +1110,7 @@ export default function App() {
     }
 
     return rows;
-  }, []);
+  }, [loadXlsx]);
 
   const handleImportFileChange = useCallback((event) => {
     const file = event?.target?.files?.[0];
@@ -954,26 +1119,69 @@ export default function App() {
     setImportFileName(file.name);
     setImportResult(null);
     setImportError('');
+    setImportWarnings([]);
   }, []);
 
   const runCsvImport = useCallback(async () => {
     if (!importFile) {
-      showToast('Lütfen CSV dosyası seçin.', 'error');
+      showToast('Lütfen CSV veya Excel dosyası seçin.', 'error');
       return;
     }
 
     setImporting(true);
     setImportResult(null);
     setImportError('');
+    setImportWarnings([]);
     try {
       const rows = await readCsvFile(importFile);
-      const mappedLogs = rows.map(mapCsvRowToLog).filter((row) => row?.created_at);
-      const { uniqueLogs: logs, duplicateCount } = dedupeLogsByCreatedAt(mappedLogs);
-      const invalidCount = Math.max(0, rows.length - mappedLogs.length) + duplicateCount;
+      const importRecords = rows.map((row, index) => ({ ...mapCsvRowToImportRecord(row), index }));
+      const mappedLogs = importRecords.map((record) => record.log).filter((row) => row?.created_at);
+      const { uniqueLogs: logs, duplicateCount, adjustedCount } = dedupeLogsByCreatedAt(mappedLogs);
+
+      const warningSummary = new Map();
+      const errorSummary = new Map();
+      importRecords.forEach((record) => {
+        (record.warnings || []).forEach((item) => {
+          const existing = warningSummary.get(item.code) || { severity: 'warning', code: item.code, message: item.message, count: 0 };
+          existing.count += 1;
+          warningSummary.set(item.code, existing);
+        });
+        (record.errors || []).forEach((item) => {
+          const existing = errorSummary.get(item.code) || { severity: 'error', code: item.code, message: item.message, count: 0 };
+          existing.count += 1;
+          errorSummary.set(item.code, existing);
+        });
+      });
+
+      if (duplicateCount > 0) {
+        warningSummary.set('duplicate_created_at', {
+          severity: 'warning',
+          code: 'duplicate_created_at',
+          message: 'Aynı created_at değerine sahip mükerrer satırlar birleştirildi.',
+          count: duplicateCount,
+        });
+      }
+
+      if (adjustedCount > 0) {
+        warningSummary.set('timestamp_collision_adjusted', {
+          severity: 'warning',
+          code: 'timestamp_collision_adjusted',
+          message: 'created_at çakışan fakat içeriği farklı satırlar milisaniye kaydırılarak korundu.',
+          count: adjustedCount,
+        });
+      }
+
+      const importNoticeItems = [
+        ...Array.from(errorSummary.values()),
+        ...Array.from(warningSummary.values()),
+      ];
+      const invalidCount = Array.from(errorSummary.values()).reduce((sum, item) => sum + item.count, 0);
+      const warningCount = Array.from(warningSummary.values()).reduce((sum, item) => sum + item.count, 0);
+      setImportWarnings(importNoticeItems);
       setImportProgress({ processed: 0, total: logs.length });
 
       if (logs.length === 0) {
-        showToast('CSV içinde geçerli kayıt bulunamadı.', 'error');
+        showToast('Dosya içinde geçerli kayıt bulunamadı.', 'error');
         setImporting(false);
         return;
       }
@@ -981,7 +1189,7 @@ export default function App() {
       let result = null;
       if (isElectron && window?.electronAPI?.db) {
         if (window?.electronAPI?.db?.importLogs) {
-          result = await window.electronAPI.db.importLogs(logs);
+          result = unwrapElectronDbResult(await window.electronAPI.db.importLogs(logs), 'importLogs');
         } else {
           let inserted = 0;
           let updated = 0;
@@ -994,9 +1202,10 @@ export default function App() {
               continue;
             }
             try {
-              await window.electronAPI.db.upsertLogByCreatedAt(row);
+              unwrapElectronDbResult(await window.electronAPI.db.upsertLogByCreatedAt(row), 'upsertLogByCreatedAt');
               updated += 1;
             } catch (e) {
+              console.error('Electron import upsert error:', e);
               errors += 1;
             }
             if ((i + 1) % 100 === 0 || i + 1 === logs.length) {
@@ -1007,7 +1216,7 @@ export default function App() {
         }
       } else {
         if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-          showToast('CSV içe aktarma için internet bağlantısı gerekli.', 'error');
+          showToast('Dosya içe aktarma için internet bağlantısı gerekli.', 'error');
           setImporting(false);
           return;
         }
@@ -1063,7 +1272,8 @@ export default function App() {
           inserted,
           updated,
           invalid: invalidCount,
-          errors
+          errors,
+          warningCount
         };
 
         if (errors > 0 && lastErrorMessage) {
@@ -1074,13 +1284,20 @@ export default function App() {
       if (result && result.invalid === undefined) {
         result.invalid = invalidCount;
       }
+      if (result && result.warningCount === undefined) {
+        result.warningCount = warningCount;
+      }
 
       setImportResult(result);
       setImportProgress({ processed: logs.length, total: logs.length });
       if (result?.success === false) {
-        showToast('CSV içe aktarma hatası.', 'error');
+        showToast('Dosya içe aktarma hatası.', 'error');
       } else {
-        showToast(`İçe aktarma tamamlandı. ${result?.inserted || 0} eklendi, ${result?.updated || 0} güncellendi.`, 'success');
+        if (warningCount > 0 || invalidCount > 0) {
+          showToast(`İçe aktarma tamamlandı. ${result?.inserted || 0} eklendi, ${result?.updated || 0} güncellendi. ${invalidCount} satır atlandı, ${warningCount} uyarı üretildi.`, 'warning');
+        } else {
+          showToast(`İçe aktarma tamamlandı. ${result?.inserted || 0} eklendi, ${result?.updated || 0} güncellendi.`, 'success');
+        }
       }
 
       if (isElectron) {
@@ -1097,13 +1314,14 @@ export default function App() {
         setLogsIfChanged(activeResult?.data || [], allResult?.data || []);
       }
     } catch (e) {
+      console.error('File import error:', e);
       const message = e?.message || String(e);
       setImportError(message);
-      showToast('CSV içe aktarma hatası.', 'error');
+      showToast('Dosya içe aktarma hatası.', 'error');
     } finally {
       setImporting(false);
     }
-  }, [importFile, readCsvFile, showToast, localDbFetchLimit, remoteFetchLimit, setLogsIfChanged]);
+  }, [importFile, readCsvFile, showToast, localDbFetchLimit, remoteFetchLimit, setLogsIfChanged, unwrapElectronDbResult]);
 
   const checkOnlineStatus = useCallback(async () => {
     const now = new Date().toISOString();
@@ -1151,7 +1369,7 @@ export default function App() {
       queue.push({ action, data, id, localId: resolvedLocalId, _offlineTimestamp: Date.now() });
       localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
       checkPendingData();
-      showToast(action === 'DELETE' ? "Silme işlemi hafızaya alındı." : "İnternet yok. İşlem hafızaya alındı!", "warning");
+      showToast(action === 'DELETE' ? "Silme işlemi kuyruklandı. Senkron bekliyor." : "İşlem kuyruklandı. Senkron bekliyor.", "warning");
       if (action === 'UPDATE' && id) {
         const isExitUpdate = !!data?.exit_at;
         if (isExitUpdate) {
@@ -1160,15 +1378,17 @@ export default function App() {
           setActiveLogs(prev => prev.map(log => log.id === id ? { ...log, ...data } : log));
         }
         setAllLogs(prev => {
-          const mapped = prev.map(log => log.id === id ? { ...log, ...data } : log);
-          return data?.created_at ? upsertLogInList(mapped, { ...data, id }) : mapped;
+          const existing = prev.find(log => log.id === id);
+          const merged = existing ? { ...existing, ...data } : { ...data, id };
+          const mapped = prev.map(log => log.id === id ? merged : log);
+          return merged.created_at ? upsertLogInList(mapped, merged) : mapped;
         });
       } else if (action === 'DELETE' && id) {
         setActiveLogs(prev => prev.filter(log => log.id !== id));
         setAllLogs(prev => prev.filter(log => log.id !== id));
       }
       if (canUseLocalApi) {
-        void backupToLocalApi(action, data, resolvedLocalId);
+        backupToLocalApi(action, data, resolvedLocalId).catch(e => console.warn('backup sync failed:', e?.message));
       }
     } catch (error) {
       showToast("Offline kayıt hatası!", "error");
@@ -1221,28 +1441,72 @@ export default function App() {
   const syncOfflineData = useCallback(async () => {
     try {
       const queue = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
-      if (queue.length === 0) return;
+      if (queue.length === 0) return { successCount: 0, failCount: 0, remainingCount: 0 };
       const newQueue = [];
       let successCount = 0;
       let failCount = 0;
 
       for (const item of queue) {
         try {
-          const action = item.action || 'INSERT';
-          const data = item.data || item;
-          const id = item.id;
-          const { _offlineTimestamp, _syncAttempts, ...cleanData } = data || {};
+          const operation = resolveOfflineSyncAction(item);
+          const { _offlineTimestamp, _syncAttempts, ...cleanData } = operation?.payload || {};
           let error = null;
+          let matchedRows = null;
 
-          if (action === 'INSERT' && cleanData) {
-            const { error: e } = await supabase.from('security_logs').upsert([pickSupabaseCompatibleLog(cleanData)], { onConflict: 'created_at' });
-            error = e;
-          } else if (action === 'UPDATE' && id && cleanData) {
-            const { error: e } = await supabase.from('security_logs').update(pickSupabaseCompatibleLog(cleanData)).eq('id', id);
-            error = e;
-          } else if (action === 'DELETE' && id) {
-            const { error: e } = await supabase.from('security_logs').delete().eq('id', id);
-            error = e;
+          if (operation.action === 'INSERT' && cleanData) {
+            const insertPayload = pickSupabaseCompatibleLog(cleanData);
+            const createdAtMatch = insertPayload?.created_at || operation.matchValue;
+            if (!createdAtMatch) {
+              error = new Error('INSERT için created_at gerekli');
+            } else {
+              const lookup = await supabase
+                .from('security_logs')
+                .select('id, created_at')
+                .eq('created_at', createdAtMatch)
+                .limit(1);
+
+              error = lookup?.error || null;
+              matchedRows = lookup?.data || [];
+
+              if (!error) {
+                if (Array.isArray(matchedRows) && matchedRows.length > 0) {
+                  const response = await supabase
+                    .from('security_logs')
+                    .update(insertPayload)
+                    .eq('created_at', createdAtMatch)
+                    .select('id, created_at');
+                  error = response?.error || null;
+                  matchedRows = response?.data || [];
+                } else {
+                  const response = await supabase
+                    .from('security_logs')
+                    .insert([insertPayload])
+                    .select('id, created_at');
+                  error = response?.error || null;
+                  matchedRows = response?.data || [];
+                }
+              }
+            }
+          } else if ((operation.action === 'UPDATE' || operation.action === 'EXIT') && operation.matchField && operation.matchValue && cleanData) {
+            let query = supabase.from('security_logs').update(pickSupabaseCompatibleLog(cleanData));
+            query = query.eq(operation.matchField, operation.matchValue);
+            const response = await query.select('id, created_at');
+            error = response?.error || null;
+            matchedRows = response?.data || [];
+          } else if (operation.action === 'DELETE' && operation.matchField && operation.matchValue) {
+            let query = supabase.from('security_logs').delete();
+            query = query.eq(operation.matchField, operation.matchValue);
+            const response = await query.select('id, created_at');
+            error = response?.error || null;
+            matchedRows = response?.data || [];
+          } else {
+            error = new Error('Kuyruktaki kayıt için eşleşme anahtarı bulunamadı.');
+          }
+
+          if (!error && (operation.action === 'UPDATE' || operation.action === 'EXIT' || operation.action === 'DELETE')) {
+            if (!Array.isArray(matchedRows) || matchedRows.length === 0) {
+              error = new Error('Hedef kayıt bulunamadı');
+            }
           }
 
           if (error) {
@@ -1261,29 +1525,63 @@ export default function App() {
 
       localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(newQueue));
       checkPendingData();
-      if (successCount > 0) { showToast(`${successCount} işlem senkronize edildi!`, "success"); fetchData(); }
-      if (failCount > 0) showToast(`${failCount} işlem başarısız oldu.`, "warning");
+      if (successCount > 0 && failCount === 0 && newQueue.length === 0) {
+        showToast(`${successCount} işlem senkronize edildi!`, "success");
+        fetchData();
+      } else {
+        if (successCount > 0) fetchData();
+        if (failCount > 0 || newQueue.length > 0) {
+          showToast(`Senkron kısmi tamamlandı. Bekleyen/Hatalı: ${newQueue.length + failCount}`, "warning");
+        }
+      }
+      return { successCount, failCount, remainingCount: newQueue.length };
     } catch (error) {
       console.error('Sync error:', error);
+      return { successCount: 0, failCount: 1, remainingCount: 0, error };
     }
   }, [checkPendingData, fetchData, showToast]);
 
   const resetForm = useCallback(() => {
     setFormData({ plate: '', driver: '', driver_type: 'owner', name: '', host: '', note: '', entry_location: '', exit_location: '', seal_number_entry: '', seal_number_exit: '', tc_no: '', phone: '' });
+    setSelectedExitLogId('');
     setPlateHistory(null);
     setShowManagementList(false);
     setShowStaffList(false);
     setShowHostStaffList(false);
     setHostSearchTerm('');
     setIsCustomHost(false);
+    setVehicleDirection(DIRECTION_ENTRY);
     clearEntryAttachments();
   }, [clearEntryAttachments]);
 
   // --- ÇIKIŞ FONKSİYONU ---
-  const handleExit = useCallback(async (id, sealNo, additionalData = {}) => {
-    if (!id) { showToast("Geçersiz kayıt ID'si!", "error"); return; }
-    const existingLog = activeLogs.find(l => l.id === id) || allLogs.find(l => l.id === id) || null;
-    setActionLoading(id);
+  const handleExit = useCallback(async (targetId, sealNo, additionalData = {}, fallbackLog = null) => {
+    const existingLog = fallbackLog
+      || activeLogs.find((log) => (
+        String(log?.id || '') === String(targetId)
+        || getLogBindingId(log) === String(targetId)
+      ))
+      || allLogs.find((log) => (
+        String(log?.id || '') === String(targetId)
+        || getLogBindingId(log) === String(targetId)
+      ))
+      || null;
+
+    if (!existingLog) {
+      showToast("Çıkış yapılacak kayıt bulunamadı.", "error");
+      return false;
+    }
+
+    const normalizedId = getLogBindingId(existingLog) || String(existingLog?.id || targetId || '');
+    const localRecordId = existingLog?.id ?? null;
+    if (!normalizedId) { showToast("Geçersiz kayıt kimliği!", "error"); return false; }
+    if (exitInFlightIdsRef.current.has(normalizedId)) return false;
+    if (existingLog?.exit_at) {
+      showToast("Bu kayıt zaten çıkış yapmış görünüyor.", "error");
+      return false;
+    }
+    exitInFlightIdsRef.current.add(normalizedId);
+    setActionLoading(localRecordId || normalizedId);
 
     try {
       const updateData = { exit_at: new Date().toISOString(), ...additionalData };
@@ -1296,57 +1594,89 @@ export default function App() {
 
       // Electron ortamında yerel SQLite kullan
       if (isElectron) {
-        await dbClient.exitLog(id, updateData);
-        applyLocalExitState(id, updateData, existingLog);
+        if (!localRecordId) {
+          throw new Error('Çıkış işlemi için yerel kayıt kimliği bulunamadı.');
+        }
+        const exitResult = await dbClient.exitLog(localRecordId, updateData);
+        if (exitResult === false) {
+          throw new Error('Çıkış işlemi veritabanında tamamlanamadı. Kayıt güncel olmayabilir, listeyi yenileyin.');
+        }
+        applyLocalExitState(localRecordId, updateData, existingLog);
+        if (selectedExitLogId && normalizedId === String(selectedExitLogId)) {
+          setSelectedExitLogId('');
+        }
         showToast("Çıkış işlemi tamamlandı.", "success");
         await fetchData();
+        return true;
       } else {
         // Web ortamında Supabase kullan
         const reallyOnline = await checkOnlineStatus();
         setIsOnline(reallyOnline);
 
         if (!reallyOnline) {
-          saveToOfflineQueue(existingLog?.created_at ? { ...updateData, created_at: existingLog.created_at } : updateData, 'UPDATE', id);
-          applyLocalExitState(id, updateData, existingLog);
-          setActionLoading(null);
-          return;
+          saveToOfflineQueue(
+            existingLog?.created_at ? { ...updateData, created_at: existingLog.created_at } : updateData,
+            'UPDATE',
+            localRecordId,
+            existingLog?.created_at || null
+          );
+          applyLocalExitState(localRecordId, updateData, existingLog);
+          if (selectedExitLogId && normalizedId === String(selectedExitLogId)) {
+            setSelectedExitLogId('');
+          }
+          return true;
         }
 
-        const { error } = await supabase.from('security_logs').update(pickSupabaseCompatibleLog(updateData)).eq('id', id);
+        let query = supabase.from('security_logs').update(pickSupabaseCompatibleLog(updateData));
+        if (existingLog?.created_at) {
+          query = query.eq('created_at', existingLog.created_at);
+        } else if (localRecordId) {
+          query = query.eq('id', localRecordId);
+        } else {
+          throw new Error('Çıkış işlemi için uzak kayıt anahtarı bulunamadı.');
+        }
+
+        const { data: updatedRows, error } = await query.select('id, created_at').limit(1);
         if (error) {
-          showToast(`Çıkış hatası: ${error.message}`, "error");
+          throw new Error(`Çıkış işlemi kaydedilemedi: ${error.message}`);
+        }
+        if (!Array.isArray(updatedRows) || updatedRows.length === 0) {
+          throw new Error('Çıkış işlemi hedef kaydı bulamadı. Listeyi yenileyip tekrar deneyin.');
         } else {
           showToast("Çıkış işlemi tamamlandı.", "success");
-          applyLocalExitState(id, updateData, existingLog);
+          applyLocalExitState(localRecordId, updateData, existingLog);
+          if (selectedExitLogId && normalizedId === String(selectedExitLogId)) {
+            setSelectedExitLogId('');
+          }
           await fetchData();
+          return true;
         }
       }
     } catch (error) {
-      showToast(`Hata: ${error.message}`, "error");
+      showToast(error?.message || "Çıkış işlemi başarısız oldu.", "error");
+      return false;
     } finally {
+      exitInFlightIdsRef.current.delete(normalizedId);
       setActionLoading(null);
     }
-  }, [activeLogs, allLogs, applyLocalExitState, checkOnlineStatus, fetchData, saveToOfflineQueue, showToast]);
+  }, [activeLogs, allLogs, applyLocalExitState, checkOnlineStatus, fetchData, saveToOfflineQueue, selectedExitLogId, showToast]);
 
   // --- GİRİŞ FONKSİYONU ---
-  const handleEntry = useCallback(async () => {
-    if (mainTab === 'vehicle' && !formData.plate) return showToast("Plaka giriniz!", "error");
-    if (mainTab === 'visitor' && !formData.name) return showToast("İsim seçiniz/giriniz!", "error");
-    if ((vehicleSubTab === 'company' || vehicleSubTab === 'service') && vehicleDirection === 'Giriş' && !formData.entry_location) return showToast("Lokasyon giriniz!", "error");
-    if ((vehicleSubTab === 'management' || vehicleSubTab === 'company') && vehicleDirection === 'Giriş' && formData.driver_type !== 'owner' && !formData.driver) return showToast("Aracı kullanan kişinin adını giriniz!", "error");
-    // MÜHÜR NUMARASI ARTIK OPSİYONEL - Zorunlu değil!
-    // if (vehicleSubTab === 'sealed' && vehicleDirection === 'Giriş' && !formData.seal_number_entry) return showToast("Giriş Mühür No giriniz!", "error");
-    if (formData.tc_no && formData.tc_no !== 'BELİRTİLMEDİ' && !isValidTC(formData.tc_no)) return showToast("Geçersiz TC Kimlik No!", "error");
-
-    const isHostRequired = !(mainTab === 'visitor' && visitorSubTab === 'staff');
-    if (isHostRequired && vehicleDirection === 'Giriş' && !formData.host) return showToast("İlgili birimi/kişiyi seçiniz.", "error");
-
+  const handleEntry = useCallback(async () => withSingleFlight(entryInFlightRef, 'entry-submit', async () => {
     // Çıkış işlemi
     if (vehicleDirection === 'Çıkış') {
-      const searchValue = mainTab === 'vehicle' ? formData.plate.toUpperCase() : formData.name.toUpperCase();
-      const existingLog = activeLogs.find(log => (mainTab === 'vehicle' && log.plate === searchValue) || (mainTab === 'visitor' && log.name === searchValue));
+      const rawIdentifier = mainTab === 'vehicle' ? formData.plate : formData.name;
+      const exitLookup = resolveExitRecord({
+        selectedExitLogId,
+        activeLogs,
+        allLogs,
+        mainTab,
+        rawIdentifier,
+      });
+      const existingLog = exitLookup.record;
 
       if (existingLog) {
+        setSelectedExitLogId(getLogBindingId(existingLog) || String(existingLog.id || ''));
         if (existingLog.sub_category === 'Mühürlü Araç') {
           setExitingLogData(existingLog);
           setExitSealNumber('');
@@ -1371,34 +1701,63 @@ export default function App() {
           }
         }
 
+        const identifier = existingLog.plate || existingLog.name || rawIdentifier;
+
         setConfirmModal({
           isOpen: true,
           title: 'Çıkış Onayı',
-          message: `${searchValue} için çıkış işlemini onaylıyor musunuz?${extraData.exit_location ? `\nGidilen: ${extraData.exit_location}` : ''}`,
+          message: `${identifier} için çıkış işlemini onaylıyor musunuz?${extraData.exit_location ? `\nGidilen: ${extraData.exit_location}` : ''}`,
           type: 'warning',
           onConfirm: async () => {
             setConfirmModal(prev => ({ ...prev, isOpen: false }));
-            await handleExit(existingLog.id, null, extraData);
-            resetForm();
+            const didExit = await handleExit(getLogBindingId(existingLog) || existingLog.id, null, extraData, existingLog);
+            if (didExit) resetForm();
           }
         });
         return;
       } else {
-        // Araç/kişi içeride görünmüyorsa çıkış yapılamaz
+        if (exitLookup.reason === 'selected_not_found') {
+          setSelectedExitLogId('');
+          showToast("Seçilen aktif kayıt artık içeride görünmüyor. Listeyi yenileyip tekrar seçin.", "error");
+          return;
+        }
+        if (exitLookup.reason === 'ambiguous') {
+          showToast("Birden fazla aktif kayıt bulundu. Lütfen listeden doğru kaydı seçin.", "error");
+          return;
+        }
+        if (exitLookup.reason === 'missing_input') {
+          showToast("Çıkış için aktif kaydı seçin veya plaka/isim girin.", "error");
+          return;
+        }
         showToast("HATA: Bu araç/kişi içeride görünmüyor! Önce giriş kaydı yapılmalı.", "error");
         return;
       }
     }
+
+    if (mainTab === 'vehicle' && !formData.plate) return showToast("Plaka giriniz!", "error");
+    if (mainTab === 'visitor' && !formData.name) return showToast("İsim seçiniz/giriniz!", "error");
+    if ((vehicleSubTab === 'company' || vehicleSubTab === 'service') && vehicleDirection === 'Giriş' && !formData.entry_location) return showToast("Lokasyon giriniz!", "error");
+    if ((vehicleSubTab === 'management' || vehicleSubTab === 'company') && vehicleDirection === 'Giriş' && formData.driver_type !== 'owner' && !formData.driver) return showToast("Aracı kullanan kişinin adını giriniz!", "error");
+    // MÜHÜR NUMARASI ARTIK OPSİYONEL - Zorunlu değil!
+    // if (vehicleSubTab === 'sealed' && vehicleDirection === 'Giriş' && !formData.seal_number_entry) return showToast("Giriş Mühür No giriniz!", "error");
+    if (formData.tc_no && formData.tc_no !== 'BELİRTİLMEDİ' && !isValidTC(formData.tc_no)) return showToast("Geçersiz TC Kimlik No!", "error");
+
+    const isHostRequired = !(mainTab === 'visitor' && visitorSubTab === 'staff');
+    if (isHostRequired && vehicleDirection === 'Giriş' && !formData.host) return showToast("İlgili birimi/kişiyi seçiniz.", "error");
 
     // Giriş kontrolü - Veritabanından anlık kontrol yap
     if (vehicleDirection === 'Giriş') {
       const searchValue = mainTab === 'vehicle' ? formData.plate.toUpperCase() : formData.name.toUpperCase();
 
       // Önce local kontrolü yap
-      const existingLocalRecord = activeLogs.find(log =>
-        (mainTab === 'vehicle' && log.plate === searchValue) ||
-        (mainTab === 'visitor' && log.name === searchValue)
-      );
+      const matchingLocalRecords = activeLogs.filter(log => matchesByTab(log, searchValue, mainTab));
+
+      if (matchingLocalRecords.length > 1) {
+        showToast("Bu plaka/isim için birden fazla açık kayıt var. Önce Çıkış ekranından doğru kaydı seçerek kapatın.", "error");
+        return;
+      }
+
+      const existingLocalRecord = matchingLocalRecords[0] || null;
 
       if (existingLocalRecord) {
         setConfirmModal({
@@ -1411,8 +1770,8 @@ export default function App() {
           confirmVariant: 'destructive',
           onConfirm: async () => {
             setConfirmModal(prev => ({ ...prev, isOpen: false }));
-            await handleExit(existingLocalRecord.id, null, {});
-            showToast(`${searchValue} için açık kayıt kapatıldı. Girişi tekrar kaydedebilirsiniz.`, "info");
+            const didExit = await handleExit(getLogBindingId(existingLocalRecord) || existingLocalRecord.id, null, {}, existingLocalRecord);
+            if (didExit) showToast(`${searchValue} için açık kayıt kapatıldı. Girişi tekrar kaydedebilirsiniz.`, "info");
           }
         });
         return;
@@ -1423,12 +1782,13 @@ export default function App() {
         // Electron ortamında yerel veritabanını kontrol et
         if (isElectron) {
           const activeData = await dbClient.getActiveLogs();
-          const existingRecords = activeData.filter(log =>
-            (mainTab === 'vehicle' && log.plate === searchValue) ||
-            (mainTab === 'visitor' && log.name === searchValue)
-          );
+          const existingRecords = activeData.filter(log => matchesByTab(log, searchValue, mainTab));
 
           if (existingRecords && existingRecords.length > 0) {
+            if (existingRecords.length > 1) {
+              showToast("Veritabanında aynı plaka/isim için birden fazla açık kayıt var. Doğru kaydı manuel seçip kapatın.", "error");
+              return;
+            }
             setConfirmModal({
               isOpen: true,
               title: '⚠️ Araç/Kişi Zaten İçeride!',
@@ -1436,9 +1796,8 @@ export default function App() {
               type: 'warning',
               onConfirm: async () => {
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
-                await handleExit(existingRecords[0].id, null, {});
-                showToast(`${searchValue} çıkış yaptırıldı.`, "success");
-                fetchData();
+                const didExit = await handleExit(getLogBindingId(existingRecords[0]) || existingRecords[0].id, null, {}, existingRecords[0]);
+                if (didExit) showToast(`${searchValue} çıkış yaptırıldı.`, "success");
               }
             });
             return;
@@ -1447,7 +1806,7 @@ export default function App() {
           // Web ortamında Supabase kontrolü
           const reallyOnline = await checkOnlineStatus();
           if (reallyOnline) {
-            let dbQuery = supabase.from('security_logs').select('id, plate, name').is('exit_at', null);
+            let dbQuery = supabase.from('security_logs').select('id, created_at, plate, name').is('exit_at', null);
 
             if (mainTab === 'vehicle') {
               dbQuery = dbQuery.eq('plate', searchValue);
@@ -1458,6 +1817,10 @@ export default function App() {
             const { data: existingRecords } = await dbQuery;
 
             if (existingRecords && existingRecords.length > 0) {
+              if (existingRecords.length > 1) {
+                showToast("Uzak veritabanında aynı plaka/isim için birden fazla açık kayıt var. Doğru kaydı manuel seçip kapatın.", "error");
+                return;
+              }
               // Varolan kaydı çıkış yapmak isteyip istemediğini sor
               setConfirmModal({
                 isOpen: true,
@@ -1466,9 +1829,8 @@ export default function App() {
                 type: 'warning',
                 onConfirm: async () => {
                   setConfirmModal(prev => ({ ...prev, isOpen: false }));
-                  await handleExit(existingRecords[0].id, null, {});
-                  showToast(`${searchValue} çıkış yaptırıldı.`, "success");
-                  fetchData();
+                  const didExit = await handleExit(getLogBindingId(existingRecords[0]) || existingRecords[0].id, null, {}, existingRecords[0]);
+                  if (didExit) showToast(`${searchValue} çıkış yaptırıldı.`, "success");
                 }
               });
               return;
@@ -1571,12 +1933,13 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [mainTab, vehicleSubTab, visitorSubTab, vehicleDirection, formData, activeLogs, currentShift, session, checkOnlineStatus, saveToOfflineQueue, resetForm, fetchData, showToast, handleExit, applyLocalLogUpsert]);
+  }), [mainTab, vehicleSubTab, visitorSubTab, vehicleDirection, formData, selectedExitLogId, activeLogs, allLogs, currentShift, session, checkOnlineStatus, saveToOfflineQueue, resetForm, fetchData, showToast, handleExit, applyLocalLogUpsert]);
 
   const confirmSealedExit = useCallback(async () => {
     if (!exitSealNumber?.trim()) return showToast("Lütfen Çıkış Mühür Numarasını Giriniz!", "error");
-    if (!exitingLogData?.id) return showToast("Geçersiz kayıt!", "error");
-    await handleExit(exitingLogData.id, sanitizeInput(exitSealNumber));
+    if (!(getLogBindingId(exitingLogData) || exitingLogData?.id)) return showToast("Geçersiz kayıt!", "error");
+    const didExit = await handleExit(getLogBindingId(exitingLogData) || exitingLogData.id, sanitizeInput(exitSealNumber), {}, exitingLogData);
+    if (!didExit) return;
     setExitSealModalOpen(false);
     setExitingLogData(null);
     setExitSealNumber('');
@@ -1633,6 +1996,18 @@ export default function App() {
       phone: editForm.phone, created_at: editForm.created_at, exit_at: editForm.exit_at
     };
 
+    if (!updateData.created_at) {
+      return showToast('Giriş saati gerekli.', 'error');
+    }
+
+    const chronologyIssue = getChronologyIssue(updateData.created_at, updateData.exit_at);
+    if (chronologyIssue === 'invalid_timestamp') {
+      return showToast('Giriş veya çıkış zamanı geçersiz.', 'error');
+    }
+    if (chronologyIssue === 'exit_before_entry') {
+      return showToast('Çıkış saati giriş saatinden önce olamaz.', 'error');
+    }
+
     try {
       setActionLoading(editingLog.id);
       // Electron ortamında yerel SQLite kullan
@@ -1676,6 +2051,7 @@ export default function App() {
 
   const handleQuickExit = useCallback(async (log) => {
     if (actionLoading) return;
+    setSelectedExitLogId(getLogBindingId(log) || String(log.id || ''));
     if (log.sub_category === 'Mühürlü Araç') {
       setExitingLogData(log);
       setExitSealNumber('');
@@ -1692,14 +2068,20 @@ export default function App() {
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
         const shouldUseLegacyQuickExit = window?.electronAPI?.__useLegacyQuickExit === true;
         if (!shouldUseLegacyQuickExit) {
-          await handleExit(log.id);
+          await handleExit(getLogBindingId(log) || log.id, null, {}, log);
           return;
         }
         try {
-          setActionLoading(log.id);
+          setActionLoading(log.id || getLogBindingId(log));
           // Electron ortamında yerel SQLite kullan
           if (isElectron) {
-            await dbClient.exitLog(log.id, { exit_at: new Date().toISOString() });
+            const exitResult = await dbClient.exitLog(log.id, { exit_at: new Date().toISOString() });
+            if (exitResult === false) {
+              throw new Error('Çıkış işlemi veritabanında tamamlanamadı. Kayıt güncel olmayabilir, listeyi yenileyin.');
+            }
+            if (selectedExitLogId && (getLogBindingId(log) === String(selectedExitLogId) || String(log.id || '') === String(selectedExitLogId))) {
+              setSelectedExitLogId('');
+            }
             showToast(`✅ ${identifier} çıkış yaptı!`, "success");
             fetchData();
           } else {
@@ -1707,8 +2089,15 @@ export default function App() {
             const reallyOnline = await checkOnlineStatus();
             setIsOnline(reallyOnline);
             if (!reallyOnline) { showToast("Çıkış işlemi için internet bağlantısı gerekir.", "error"); return; }
-            const { error } = await supabase.from('security_logs').update(pickSupabaseCompatibleLog({ exit_at: new Date().toISOString() })).eq('id', log.id);
+            let query = supabase.from('security_logs').update(pickSupabaseCompatibleLog({ exit_at: new Date().toISOString() }));
+            if (log?.created_at) {
+              query = query.eq('created_at', log.created_at);
+            } else {
+              query = query.eq('id', log.id);
+            }
+            const { data: updatedRows, error } = await query.select('id, created_at').limit(1);
             if (error) showToast(`Çıkış hatası: ${error.message}`, "error");
+            else if (!Array.isArray(updatedRows) || updatedRows.length === 0) { showToast("Çıkış hatası: hedef kayıt bulunamadı.", "error"); }
             else { showToast(`✅ ${identifier} çıkış yaptı!`, "success"); fetchData(); }
           }
         } catch (error) {
@@ -1718,7 +2107,7 @@ export default function App() {
         }
       }
     });
-  }, [actionLoading, checkOnlineStatus, fetchData, showToast, handleExit]);
+  }, [actionLoading, checkOnlineStatus, fetchData, selectedExitLogId, showToast, handleExit]);
 
   const quickEntry = useCallback(async (plate, category, host) => {
     if (loading) return;
@@ -1817,45 +2206,62 @@ export default function App() {
 
   // ── Gerçek filtreleme mantığı ──
   const filteredLogs = useMemo(() => {
-    let result = allLogs;
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      result = result.filter(log =>
+    // Hiç filtre yoksa doğrudan dön
+    if (!searchTerm && !dateFrom && !dateTo && !categoryFilter && statusFilter === 'all' && typeFilter === 'all' && !shiftFilter && !hostFilter && !locationFilter && !sealFilter) {
+      return allLogs;
+    }
+
+    const term = searchTerm ? searchTerm.toLowerCase() : '';
+    const hf = hostFilter ? hostFilter.toLowerCase() : '';
+    const lf = locationFilter ? locationFilter.toLowerCase() : '';
+    const sf = sealFilter ? sealFilter.toLowerCase() : '';
+
+    return allLogs.filter(log => {
+      // Arama
+      if (term && !(
         (log.plate && log.plate.toLowerCase().includes(term)) ||
         (log.name && log.name.toLowerCase().includes(term)) ||
         (log.tc_no && log.tc_no.includes(term)) ||
         (log.phone && log.phone.includes(term)) ||
         (log.driver && log.driver.toLowerCase().includes(term))
-      );
-    }
-    if (dateFrom) result = result.filter(log => toDateOnly(log.created_at) >= dateFrom);
-    if (dateTo) result = result.filter(log => toDateOnly(log.created_at) <= dateTo);
-    if (categoryFilter) result = result.filter(log => log.sub_category === categoryFilter);
-    if (statusFilter === 'inside') result = result.filter(log => !log.exit_at);
-    else if (statusFilter === 'outside') result = result.filter(log => !!log.exit_at);
-    if (typeFilter === 'vehicle') result = result.filter(log => !!log.plate);
-    else if (typeFilter === 'visitor') result = result.filter(log => !log.plate);
-    if (shiftFilter) result = result.filter(log => log.shift === shiftFilter);
-    if (hostFilter) {
-      const hf = hostFilter.toLowerCase();
-      result = result.filter(log => log.host && log.host.toLowerCase().includes(hf));
-    }
-    if (locationFilter) {
-      const lf = locationFilter.toLowerCase();
-      result = result.filter(log =>
+      )) return false;
+
+      // Tarih
+      if (dateFrom && toDateOnly(log.created_at) < dateFrom) return false;
+      if (dateTo && toDateOnly(log.created_at) > dateTo) return false;
+
+      // Kategori
+      if (categoryFilter && log.sub_category !== categoryFilter) return false;
+
+      // Durum
+      if (statusFilter === 'inside' && log.exit_at) return false;
+      if (statusFilter === 'outside' && !log.exit_at) return false;
+
+      // Tip
+      if (typeFilter === 'vehicle' && !log.plate) return false;
+      if (typeFilter === 'visitor' && log.plate) return false;
+
+      // Vardiya
+      if (shiftFilter && log.shift !== shiftFilter) return false;
+
+      // İlgili birim
+      if (hf && !(log.host && log.host.toLowerCase().includes(hf))) return false;
+
+      // Konum
+      if (lf && !(
         (getEntryLocation(log) && getEntryLocation(log).toLowerCase().includes(lf)) ||
         (getExitLocation(log) && getExitLocation(log).toLowerCase().includes(lf)) ||
         (log.location && log.location.toLowerCase().includes(lf))
-      );
-    }
-    if (sealFilter) {
-      const sf = sealFilter.toLowerCase();
-      result = result.filter(log =>
+      )) return false;
+
+      // Mühür
+      if (sf && !(
         (log.seal_number_entry && log.seal_number_entry.toLowerCase().includes(sf)) ||
         (log.seal_number_exit && log.seal_number_exit.toLowerCase().includes(sf))
-      );
-    }
-    return result;
+      )) return false;
+
+      return true;
+    });
   }, [allLogs, searchTerm, dateFrom, dateTo, categoryFilter, statusFilter, typeFilter, shiftFilter, hostFilter, locationFilter, sealFilter]);
 
   // ── Dashboard kart tıklama → geçmişi aç + filtrele ──
@@ -1882,32 +2288,33 @@ export default function App() {
     }, 100);
   }, []);
 
-  const exportToExcel = useCallback(() => {
+  const exportToExcel = useCallback(async () => {
     try {
       if (filteredLogs.length === 0) return showToast("Veri yok", "error");
+      const XLSX = await loadXlsx();
       const exportData = filteredLogs.map(log => ({
-        Tarih: new Date(log.created_at).toLocaleDateString('tr-TR'), Vardiya: log.shift, Kategori: log.sub_category,
+        Tarih: formatTrDate(log.created_at), Vardiya: log.shift, Kategori: log.sub_category,
         'Plaka/İsim': log.plate || log.name, 'Sürücü': log.driver || '-', 'İlgili Birim': log.host,
         Lokasyon: formatLogLocation(log) || '-', 'TC Kimlik': log.tc_no || '-', Telefon: log.phone || '-',
         Açıklama: log.note || '-', 'Giriş Mührü': log.seal_number_entry || '-', 'Çıkış Mührü': log.seal_number_exit || '-',
-        'Giriş Saati': new Date(log.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-        'Çıkış Saati': log.exit_at ? new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : 'İÇERİDE'
+        'Giriş Saati': formatTrTime(log.created_at, { hour: '2-digit', minute: '2-digit' }),
+        'Çıkış Saati': log.exit_at ? formatTrTime(log.exit_at, { hour: '2-digit', minute: '2-digit' }) : 'İÇERİDE'
       }));
       const ws = XLSX.utils.json_to_sheet(exportData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Rapor");
-      XLSX.writeFile(wb, `Guvenlik_Raporu_${new Date().toLocaleDateString('tr-TR').replace(/\./g, '-')}.xlsx`);
+      XLSX.writeFile(wb, `Guvenlik_Raporu_${formatTrDate(new Date()).replace(/\./g, '-')}.xlsx`);
       showToast("Excel dosyası indirildi!", "success");
     } catch (error) {
       showToast("Excel oluşturma hatası!", "error");
     }
-  }, [filteredLogs, showToast]);
+  }, [filteredLogs, loadXlsx, showToast]);
 
 const sendDailyReport = useCallback((dateParam) => {
     setConfirmModal({
       isOpen: true,
       title: 'Rapor Gönderimi',
-      message: `${new Date(dateParam).toLocaleDateString('tr-TR')} tarihli rapor hazırlanacak.\n\n${isElectron ? 'E-posta yerel SMTP üzerinden gönderilecek.' : 'Excel raporu indirilecek.'}`,
+      message: `${formatTrDate(dateParam)} tarihli rapor hazırlanacak.\n\n${isElectron ? 'E-posta yerel SMTP üzerinden gönderilecek.' : 'Excel raporu indirilecek.'}`,
       type: 'info',
       onConfirm: async () => {
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
@@ -1947,8 +2354,8 @@ const sendDailyReport = useCallback((dateParam) => {
             }
 
             const reportData = reportLogs.map(log => ({
-              Tarih: new Date(log.created_at).toLocaleDateString('tr-TR'),
-              Saat: new Date(log.created_at).toLocaleTimeString('tr-TR'),
+              Tarih: formatTrDate(log.created_at),
+              Saat: formatTrTime(log.created_at),
               Vardiya: log.shift || '-',
               Tip: log.type === 'vehicle' ? 'Araç' : 'Ziyaretçi',
               Kategori: log.sub_category || '-',
@@ -1956,13 +2363,14 @@ const sendDailyReport = useCallback((dateParam) => {
               'Surucu': log.driver || '-',
               'İlgili Birim': log.host || '-',
               Lokasyon: formatLogLocation(log) || '-',
-              'Giriş Saati': new Date(log.created_at).toLocaleTimeString('tr-TR'),
-              'Çıkış Saati': log.exit_at ? new Date(log.exit_at).toLocaleTimeString('tr-TR') : 'İçeride',
+              'Giriş Saati': formatTrTime(log.created_at),
+              'Çıkış Saati': log.exit_at ? formatTrTime(log.exit_at) : 'İçeride',
               'TC Kimlik': log.tc_no || '-',
               Telefon: log.phone || '-',
               'Aciklama': log.note || '-'
             }));
 
+            const XLSX = await loadXlsx();
             const ws = XLSX.utils.json_to_sheet(reportData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "NewSecurityy Raporu");
@@ -1979,7 +2387,7 @@ const sendDailyReport = useCallback((dateParam) => {
         }
       }
     });
-  }, [allLogs, showToast]);
+  }, [allLogs, loadXlsx, showToast]);
 
   const hostOptions = useMemo(
     () => showHistoryPanel ? Array.from(new Set(filteredLogs.map((log) => log.host).filter(Boolean))) : [],
@@ -1993,14 +2401,39 @@ const sendDailyReport = useCallback((dateParam) => {
 
   const reportTableState = useMemo(() => {
     const sourceTotal = filteredLogs.length;
-    const rows = filteredLogs.slice(0, reportRenderLimit);
-    const totalRows = rows.length;
+    const base = filteredLogs.slice(0, reportRenderLimit);
+
+    // Sıralama uygula
+    const { key, dir } = reportSort;
+    const d = dir === 'asc' ? 1 : -1;
+    const sorted = [...base].sort((a, b) => {
+      if (key === 'created_at' || key === 'exit_at') {
+        const av = a[key] ? new Date(a[key]).getTime() : 0;
+        const bv = b[key] ? new Date(b[key]).getTime() : 0;
+        return (av - bv) * d;
+      }
+      if (key === 'status') {
+        const av = a.exit_at ? 1 : 0;
+        const bv = b.exit_at ? 1 : 0;
+        return (av - bv) * d;
+      }
+      if (key === 'identifier') {
+        const av = String(a.plate || a.name || '');
+        const bv = String(b.plate || b.name || '');
+        return av.localeCompare(bv, 'tr', { sensitivity: 'base' }) * d;
+      }
+      const av = String(a[key] ?? '');
+      const bv = String(b[key] ?? '');
+      return av.localeCompare(bv, 'tr', { sensitivity: 'base' }) * d;
+    });
+
+    const totalRows = sorted.length;
     const totalPages = Math.max(1, Math.ceil(totalRows / reportPageSize));
     const safePage = Math.min(Math.max(1, reportCurrentPage), totalPages);
     const startIndex = (safePage - 1) * reportPageSize;
     const endIndex = Math.min(totalRows, startIndex + reportPageSize);
     return {
-      rows: rows.slice(startIndex, endIndex),
+      rows: sorted.slice(startIndex, endIndex),
       sourceTotal,
       totalRows,
       totalPages,
@@ -2009,11 +2442,10 @@ const sendDailyReport = useCallback((dateParam) => {
       endIndex,
       isTruncated: sourceTotal > reportRenderLimit,
     };
-  }, [filteredLogs, reportRenderLimit, reportCurrentPage, reportPageSize]);
+  }, [filteredLogs, reportRenderLimit, reportCurrentPage, reportPageSize, reportSort]);
 
-  const _emptyAdvancedReport = { total: 0, insideCount: 0, exitedCount: 0, avgStayMins: 0, topHosts: [], hourly: [], busiestHour: { hour: 0, count: 0 } };
   const advancedReport = useMemo(() => {
-    if (liteMode || !advancedReportEnabled) return _emptyAdvancedReport;
+    if (liteMode || !advancedReportEnabled) return createEmptyAdvancedReport();
     const total = filteredLogs.length;
     let insideCount = 0;
     const hourlyBase = Array.from({ length: 24 }, (_, hour) => ({ hour, count: 0 }));
@@ -2172,18 +2604,28 @@ const sendDailyReport = useCallback((dateParam) => {
 
   const handleManualSync = useCallback(async () => {
     try {
+      let offlineResult = { successCount: 0, failCount: 0, remainingCount: 0 };
       if (isElectron) {
         await processSyncQueue();
         await processLocalSyncQueue();
-        await syncFromSupabase();
+        await syncFromSupabase({ forceFull: true });
         await syncFromLocalApi();
       } else {
-        await syncOfflineData();
+        offlineResult = await syncOfflineData() || offlineResult;
         await processSyncQueue();
         await processLocalSyncQueue();
       }
       await fetchData();
-      showToast('Senkronizasyon tamamlandi.', 'success');
+      const nextStatus = getSyncStatus() || {};
+      const remainingSyncItems =
+        Number(nextStatus?.queueCount || 0)
+        + Number(nextStatus?.local?.queueCount || 0)
+        + Number(offlineResult?.remainingCount || 0);
+      if (remainingSyncItems > 0 || Number(offlineResult?.failCount || 0) > 0) {
+        showToast('Senkronizasyon kısmi tamamlandı. Bekleyen veya hatalı kayıtlar var.', 'warning');
+      } else {
+        showToast('Senkronizasyon tamamlandi.', 'success');
+      }
     } catch (e) {
       showToast(`Senkronizasyon hatasi: ${e?.message || String(e)}`, 'error');
     } finally {
@@ -2226,7 +2668,11 @@ const sendDailyReport = useCallback((dateParam) => {
         if (result?.offline) {
           showToast('Internet baglantisi yok. Aktarim yapilamadi.', 'error');
         } else if (result?.ok) {
-          showToast(`Aktarim tamamlandi. ${result.processed || 0} kayit.`, 'success');
+          if ((result?.skippedInvalid || 0) > 0) {
+            showToast(`Aktarım tamamlandı. ${result.processed || 0} kayıt işlendi, ${result.skippedInvalid} geçersiz kayıt atlandı.`, 'warning');
+          } else {
+            showToast(`Aktarım tamamlandı. ${result.processed || 0} kayıt.`, 'success');
+          }
         } else {
           const message = result?.error?.message || (result?.error ? String(result.error) : 'Bilinmeyen hata');
           showToast(`Aktarim hatasi: ${message}`, 'error');
@@ -2407,6 +2853,32 @@ const sendDailyReport = useCallback((dateParam) => {
     return () => clearInterval(id);
   }, [refreshSyncStatus, syncStatusIntervalMs]);
 
+  // İlk başlatma sync event'lerini dinle
+  useEffect(() => {
+    const onSyncStart = (e) => {
+      if (e.detail?.reason === 'first_launch') {
+        setInitialSyncState({ active: true, done: false, count: 0 });
+      }
+    };
+    const onSyncDone = (e) => {
+      if (e.detail?.firstLaunch) {
+        setInitialSyncState({ active: false, done: true, count: e.detail?.count || 0 });
+        setTimeout(() => setInitialSyncState((prev) => ({ ...prev, done: false })), 5000);
+      }
+    };
+    const onSyncDropped = () => {
+      showToast('Senkronizasyon hatasi: Bir kayit 5 denemeden sonra gonderilemedi.', 'error');
+    };
+    window.addEventListener('supabase-sync-start', onSyncStart);
+    window.addEventListener('supabase-sync-done', onSyncDone);
+    window.addEventListener('sync-item-dropped', onSyncDropped);
+    return () => {
+      window.removeEventListener('supabase-sync-start', onSyncStart);
+      window.removeEventListener('supabase-sync-done', onSyncDone);
+      window.removeEventListener('sync-item-dropped', onSyncDropped);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     try {
       localStorage.setItem(SHOW_SYNC_PANEL_KEY, showSyncPanel ? '1' : '0');
@@ -2481,12 +2953,27 @@ const sendDailyReport = useCallback((dateParam) => {
     return () => { if (fetchIntervalRef.current) clearInterval(fetchIntervalRef.current); };
   }, [fetchData, dataRefreshIntervalMs]);
 
+  // Supabase sync tamamlandiginda verileri yenile
+  useEffect(() => {
+    const onSyncRefresh = (e) => {
+      if (e.detail?.count > 0 || e.detail?.firstLaunch) {
+        fetchData();
+      }
+    };
+    window.addEventListener('supabase-sync-done', onSyncRefresh);
+    return () => window.removeEventListener('supabase-sync-done', onSyncRefresh);
+  }, [fetchData]);
+
   useEffect(() => { localStorage.setItem('soundEnabled', soundEnabled); }, [soundEnabled]);
   useEffect(() => { localStorage.setItem(LITE_MODE_KEY, liteMode ? '1' : '0'); }, [liteMode]);
 
   // Auto-enable lite mode for security role when no manual override exists
   useEffect(() => {
     if (!session) return;
+    if (FORCE_LITE_MODE) {
+      setLiteMode(true);
+      return;
+    }
     const hasManualOverride = localStorage.getItem(LITE_MODE_OVERRIDE_KEY) !== null;
     if (hasManualOverride) return;
     if (activeRole === ROLE_SECURITY) {
@@ -2529,7 +3016,7 @@ const sendDailyReport = useCallback((dateParam) => {
     if (matchingLogs.length > 0) {
       const sortedLogs = matchingLogs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       const lastVisit = sortedLogs[0];
-      setPlateHistory({ count: matchingLogs.length, lastVisit: new Date(lastVisit.created_at).toLocaleDateString('tr-TR'), lastHost: lastVisit.host, lastNote: lastVisit.note, recentVisits: sortedLogs.slice(0, 5) });
+      setPlateHistory({ count: matchingLogs.length, lastVisit: formatTrDate(lastVisit.created_at), lastHost: lastVisit.host, lastNote: lastVisit.note, recentVisits: sortedLogs.slice(0, 5) });
     } else setPlateHistory({ count: 0 });
   }, [allLogs]);
 
@@ -2691,9 +3178,8 @@ const sendDailyReport = useCallback((dateParam) => {
   }, [todayCurrentPage, todayTableState.safePage]);
 
   // Bugünkü Hareketler için detaylı istatistikler
-  const _emptyDetailedStats = { recentCount: 0, recentEntries: 0, recentExits: 0, categoryBreakdown: {}, shiftBreakdown: { 'Vardiya 1 (08:00-16:00)': 0, 'Vardiya 2 (16:00-00:00)': 0, 'Vardiya 3 (00:00-08:00)': 0 }, avgWaitMinutes: 0, completedCount: 0 };
   const todayDetailedStats = useMemo(() => {
-    if (liteMode) return _emptyDetailedStats;
+    if (liteMode) return createEmptyDetailedStats();
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     let recentEntries = 0, recentExits = 0;
     const categoryBreakdown = {};
@@ -2715,8 +3201,8 @@ const sendDailyReport = useCallback((dateParam) => {
     const today = toDateOnly(new Date());
     let totalMinutes = 0, completedCount = 0;
     for (const log of analyticsLogs) {
-      if (log.exit_at && toDateOnly(log.created_at) === today && toDateOnly(log.exit_at) === today) {
-        totalMinutes += Math.floor((new Date(log.exit_at) - new Date(log.created_at)) / 60000);
+      if (log.exit_at && !getChronologyIssue(log.created_at, log.exit_at) && toDateOnly(log.created_at) === today && toDateOnly(log.exit_at) === today) {
+        totalMinutes += calculateStayMinutes(log.created_at, log.exit_at);
         completedCount++;
       }
     }
@@ -2760,7 +3246,6 @@ const sendDailyReport = useCallback((dateParam) => {
     return Object.values(counts).filter(v => v.count >= 2).sort((a, b) => b.count - a.count).slice(0, 10);
   }, [analyticsLogs, liteMode]);
 
-  const _emptyStats = { today: 0, todayVehicle: 0, todayVisitor: 0, activeNow: 0, longStayCount: 0, week: 0, categoryStats: {}, shiftStats: {}, dailyStats: [], avgStayMins: 0 };
   const stats = useMemo(() => {
     const today = toDateOnly(new Date());
     const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
@@ -2772,7 +3257,7 @@ const sendDailyReport = useCallback((dateParam) => {
       const date = new Date(); date.setDate(date.getDate() - i);
       const dateStr = toDateOnly(date);
       dailyBuckets[dateStr] = 0;
-      dailyLabels.push({ dateStr, label: date.toLocaleDateString('tr-TR', { weekday: 'short', day: 'numeric' }) });
+      dailyLabels.push({ dateStr, label: formatTrDate(date, { weekday: 'short', day: 'numeric' }) });
     }
 
     let todayCount = 0, todayVehicle = 0, todayVisitor = 0, weekCount = 0;
@@ -2795,8 +3280,8 @@ const sendDailyReport = useCallback((dateParam) => {
         categoryStats[log.sub_category] = (categoryStats[log.sub_category] || 0) + 1;
         if (logDate in dailyBuckets) dailyBuckets[logDate]++;
       }
-      if (log.exit_at) {
-        totalStayMins += Math.floor((new Date(log.exit_at) - new Date(log.created_at)) / 60000);
+      if (log.exit_at && !getChronologyIssue(log.created_at, log.exit_at)) {
+        totalStayMins += calculateStayMinutes(log.created_at, log.exit_at);
         completedCount++;
       }
     }
@@ -2924,6 +3409,339 @@ const sendDailyReport = useCallback((dateParam) => {
     }
   }, [showToast]);
 
+  const loadPeople = useCallback(async (options = {}) => {
+    return withHrLoading(async () => {
+      const params = new URLSearchParams();
+      const query = typeof options.query === 'string' ? options.query : personQuery;
+      if (query) params.set('q', query);
+      const data = await localApiFetch(`persons${params.toString() ? `?${params}` : ''}`);
+      setPeople(Array.isArray(data) ? data : []);
+    });
+  }, [localApiFetch, personQuery, withHrLoading]);
+
+  const createPerson = useCallback(async () => {
+    const fullName = (personDraft.full_name || '').trim();
+    if (!fullName) {
+      showToast('Personel adi gerekli.', 'warning');
+      return;
+    }
+    return withHrLoading(async () => {
+      await localApiFetch('persons', {
+        method: 'POST',
+        body: {
+          ...personDraft,
+          full_name: fullName,
+          tc_no: (personDraft.tc_no || '').trim(),
+          phone: (personDraft.phone || '').trim(),
+        },
+      });
+      setPersonDraft((prev) => ({ ...prev, full_name: '', tc_no: '', phone: '' }));
+      await loadPeople({ query: '' });
+      showToast('Personel olusturuldu.', 'success');
+    });
+  }, [personDraft, localApiFetch, loadPeople, showToast, withHrLoading]);
+
+  const loadBadges = useCallback(async (options = {}) => {
+    return withHrLoading(async () => {
+      const params = new URLSearchParams();
+      const query = typeof options.query === 'string' ? options.query : badgeQuery;
+      if (query) params.set('q', query);
+      const data = await localApiFetch(`badges${params.toString() ? `?${params}` : ''}`);
+      setBadgeRecords(Array.isArray(data) ? data : []);
+    });
+  }, [badgeQuery, localApiFetch, withHrLoading]);
+
+  const createBadge = useCallback(async () => {
+    const personId = (badgeDraft.person || '').trim();
+    const code = (badgeDraft.code || '').trim().toUpperCase();
+    if (!personId || !code) {
+      showToast('Personel ve badge kodu gerekli.', 'warning');
+      return;
+    }
+    return withHrLoading(async () => {
+      await localApiFetch('badges', {
+        method: 'POST',
+        body: {
+          ...badgeDraft,
+          person: personId,
+          code,
+        },
+      });
+      setBadgeDraft((prev) => ({ ...prev, code: '' }));
+      await loadBadges({ query: '' });
+      showToast('Badge olusturuldu.', 'success');
+    });
+  }, [badgeDraft, localApiFetch, loadBadges, showToast, withHrLoading]);
+
+  const updatePerson = useCallback(async () => {
+    if (!editingPerson?.id) return;
+    const fullName = (personEditDraft.full_name || '').trim();
+    if (!fullName) {
+      showToast('Personel adi gerekli.', 'warning');
+      return;
+    }
+    return withHrLoading(async () => {
+      await localApiFetch(`persons/${editingPerson.id}`, {
+        method: 'PATCH',
+        body: {
+          ...personEditDraft,
+          full_name: fullName,
+          tc_no: (personEditDraft.tc_no || '').trim(),
+          phone: (personEditDraft.phone || '').trim(),
+        },
+      });
+      setEditingPerson(null);
+      await loadPeople();
+      showToast('Personel guncellendi.', 'success');
+    });
+  }, [editingPerson, personEditDraft, localApiFetch, loadPeople, showToast, withHrLoading]);
+
+  const setPersonActiveState = useCallback((person, isActive) => {
+    if (!person?.id) return;
+    setConfirmModal({
+      isOpen: true,
+      title: isActive ? 'Personeli Aktif Et' : 'Personeli Pasife Al',
+      message: `${person.full_name} için "${isActive ? 'aktif' : 'pasif'}" durumu uygulanacak.`,
+      type: isActive ? 'info' : 'warning',
+      confirmLabel: isActive ? 'Aktif Et' : 'Pasife Al',
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+        await withHrLoading(async () => {
+          await localApiFetch(`persons/${person.id}`, {
+            method: 'PATCH',
+            body: { is_active: isActive },
+          });
+          await loadPeople();
+          showToast(`Personel ${isActive ? 'aktif' : 'pasif'} yapildi.`, 'success');
+        });
+      },
+    });
+  }, [loadPeople, localApiFetch, showToast, withHrLoading]);
+
+  const updateBadge = useCallback(async () => {
+    if (!editingBadge?.id) return;
+    const personId = (badgeEditDraft.person || '').trim();
+    const code = (badgeEditDraft.code || '').trim().toUpperCase();
+    if (!personId || !code) {
+      showToast('Personel ve badge kodu gerekli.', 'warning');
+      return;
+    }
+    return withHrLoading(async () => {
+      await localApiFetch(`badges/${editingBadge.id}`, {
+        method: 'PATCH',
+        body: {
+          ...badgeEditDraft,
+          person: personId,
+          code,
+        },
+      });
+      setEditingBadge(null);
+      await loadBadges();
+      showToast('Badge guncellendi.', 'success');
+    });
+  }, [badgeEditDraft, editingBadge, localApiFetch, loadBadges, showToast, withHrLoading]);
+
+  const setBadgeActiveState = useCallback((badge, isActive) => {
+    if (!badge?.id) return;
+    setConfirmModal({
+      isOpen: true,
+      title: isActive ? 'Badge Aktif Et' : 'Badge Pasife Al',
+      message: `${badge.code} için "${isActive ? 'aktif' : 'pasif'}" durumu uygulanacak.`,
+      type: isActive ? 'info' : 'warning',
+      confirmLabel: isActive ? 'Aktif Et' : 'Pasife Al',
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+        await withHrLoading(async () => {
+          await localApiFetch(`badges/${badge.id}`, {
+            method: 'PATCH',
+            body: { is_active: isActive },
+          });
+          await loadBadges();
+          showToast(`Badge ${isActive ? 'aktif' : 'pasif'} yapildi.`, 'success');
+        });
+      },
+    });
+  }, [loadBadges, localApiFetch, showToast, withHrLoading]);
+
+  const loadHostPresets = useCallback(async (options = {}) => {
+    const run = async () => {
+      const params = new URLSearchParams();
+      const query = typeof options.query === 'string' ? options.query : hostPresetQuery;
+      if (query) params.set('q', query);
+      if (options.activeOnly) params.set('active', '1');
+      const data = await localApiFetch(`host-presets${params.toString() ? `?${params}` : ''}`);
+      setHostPresetRecords(Array.isArray(data) ? data : []);
+      setHostPresetsLoaded(true);
+    };
+    if (options.silent) {
+      try {
+        await run();
+      } catch (e) {
+        console.warn('Host preset load error:', e);
+      }
+      return;
+    }
+    return withHrLoading(run);
+  }, [hostPresetQuery, localApiFetch, withHrLoading]);
+
+  const createHostPreset = useCallback(async () => {
+    const name = (hostPresetDraft.name || '').trim();
+    if (!name) {
+      showToast('Host preset adi gerekli.', 'warning');
+      return;
+    }
+    return withHrLoading(async () => {
+      await localApiFetch('host-presets', {
+        method: 'POST',
+        body: {
+          ...hostPresetDraft,
+          name,
+          sort_order: Number(hostPresetDraft.sort_order || 0),
+        },
+      });
+      setHostPresetDraft(createEmptyHostPresetDraft());
+      await loadHostPresets({ query: '' });
+      showToast('Host preset olusturuldu.', 'success');
+    });
+  }, [hostPresetDraft, localApiFetch, loadHostPresets, showToast, withHrLoading]);
+
+  const updateHostPreset = useCallback(async () => {
+    if (!editingHostPreset?.id) return;
+    const name = (hostPresetEditDraft.name || '').trim();
+    if (!name) {
+      showToast('Host preset adi gerekli.', 'warning');
+      return;
+    }
+    return withHrLoading(async () => {
+      await localApiFetch(`host-presets/${editingHostPreset.id}`, {
+        method: 'PATCH',
+        body: {
+          ...hostPresetEditDraft,
+          name,
+          sort_order: Number(hostPresetEditDraft.sort_order || 0),
+        },
+      });
+      setEditingHostPreset(null);
+      await loadHostPresets();
+      showToast('Host preset guncellendi.', 'success');
+    });
+  }, [editingHostPreset, hostPresetEditDraft, localApiFetch, loadHostPresets, showToast, withHrLoading]);
+
+  const setHostPresetActiveState = useCallback((preset, isActive) => {
+    if (!preset?.id) return;
+    setConfirmModal({
+      isOpen: true,
+      title: isActive ? 'Host Preset Aktif Et' : 'Host Preset Pasife Al',
+      message: `${preset.name} icin "${isActive ? 'aktif' : 'pasif'}" durumu uygulanacak.`,
+      type: isActive ? 'info' : 'warning',
+      confirmLabel: isActive ? 'Aktif Et' : 'Pasife Al',
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+        await withHrLoading(async () => {
+          await localApiFetch(`host-presets/${preset.id}`, {
+            method: 'PATCH',
+            body: { is_active: isActive },
+          });
+          await loadHostPresets();
+          showToast(`Host preset ${isActive ? 'aktif' : 'pasif'} yapildi.`, 'success');
+        });
+      },
+    });
+  }, [loadHostPresets, localApiFetch, showToast, withHrLoading]);
+
+  const loadVehiclePresets = useCallback(async (options = {}) => {
+    const run = async () => {
+      const params = new URLSearchParams();
+      const query = typeof options.query === 'string' ? options.query : vehiclePresetQuery;
+      if (query) params.set('q', query);
+      if (options.category) params.set('category', options.category);
+      if (options.activeOnly) params.set('active', '1');
+      const data = await localApiFetch(`vehicle-presets${params.toString() ? `?${params}` : ''}`);
+      setVehiclePresetRecords(Array.isArray(data) ? data : []);
+      setVehiclePresetsLoaded(true);
+    };
+    if (options.silent) {
+      try {
+        await run();
+      } catch (e) {
+        console.warn('Vehicle preset load error:', e);
+      }
+      return;
+    }
+    return withHrLoading(run);
+  }, [localApiFetch, vehiclePresetQuery, withHrLoading]);
+
+  const createVehiclePreset = useCallback(async () => {
+    const plate = (vehiclePresetDraft.plate || '').trim().toUpperCase();
+    if (!plate) {
+      showToast('Plaka gerekli.', 'warning');
+      return;
+    }
+    return withHrLoading(async () => {
+      await localApiFetch('vehicle-presets', {
+        method: 'POST',
+        body: {
+          ...vehiclePresetDraft,
+          plate,
+          label: (vehiclePresetDraft.label || '').trim(),
+          sort_order: Number(vehiclePresetDraft.sort_order || 0),
+        },
+      });
+      setVehiclePresetDraft((prev) => ({
+        ...createEmptyVehiclePresetDraft(),
+        category: prev.category,
+        default_driver_type: prev.category === 'company' ? 'other' : 'owner',
+      }));
+      await loadVehiclePresets({ query: '' });
+      showToast('Arac preset olusturuldu.', 'success');
+    });
+  }, [vehiclePresetDraft, localApiFetch, loadVehiclePresets, showToast, withHrLoading]);
+
+  const updateVehiclePreset = useCallback(async () => {
+    if (!editingVehiclePreset?.id) return;
+    const plate = (vehiclePresetEditDraft.plate || '').trim().toUpperCase();
+    if (!plate) {
+      showToast('Plaka gerekli.', 'warning');
+      return;
+    }
+    return withHrLoading(async () => {
+      await localApiFetch(`vehicle-presets/${editingVehiclePreset.id}`, {
+        method: 'PATCH',
+        body: {
+          ...vehiclePresetEditDraft,
+          plate,
+          label: (vehiclePresetEditDraft.label || '').trim(),
+          sort_order: Number(vehiclePresetEditDraft.sort_order || 0),
+        },
+      });
+      setEditingVehiclePreset(null);
+      await loadVehiclePresets();
+      showToast('Arac preset guncellendi.', 'success');
+    });
+  }, [editingVehiclePreset, vehiclePresetEditDraft, localApiFetch, loadVehiclePresets, showToast, withHrLoading]);
+
+  const setVehiclePresetActiveState = useCallback((preset, isActive) => {
+    if (!preset?.id) return;
+    setConfirmModal({
+      isOpen: true,
+      title: isActive ? 'Arac Preset Aktif Et' : 'Arac Preset Pasife Al',
+      message: `${preset.display_name || preset.plate} icin "${isActive ? 'aktif' : 'pasif'}" durumu uygulanacak.`,
+      type: isActive ? 'info' : 'warning',
+      confirmLabel: isActive ? 'Aktif Et' : 'Pasife Al',
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+        await withHrLoading(async () => {
+          await localApiFetch(`vehicle-presets/${preset.id}`, {
+            method: 'PATCH',
+            body: { is_active: isActive },
+          });
+          await loadVehiclePresets();
+          showToast(`Arac preset ${isActive ? 'aktif' : 'pasif'} yapildi.`, 'success');
+        });
+      },
+    });
+  }, [loadVehiclePresets, localApiFetch, showToast, withHrLoading]);
+
   const loadAbsenceTypes = useCallback(async () => {
     return withHrLoading(async () => {
       const data = await localApiFetch('absence/types');
@@ -3033,7 +3851,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
   const loadAttendanceSummary = useCallback(async () => {
     if (!attendanceQuery.person_id) {
-      showToast('person_id gerekli.', 'warning');
+      showToast('Personel secimi gerekli.', 'warning');
       return;
     }
     return withHrLoading(async () => {
@@ -3056,7 +3874,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
   const createPayrollProfile = useCallback(async () => {
     if (!payrollProfileDraft.person) {
-      showToast('Personel ID gerekli.', 'warning');
+      showToast('Personel secimi gerekli.', 'warning');
       return;
     }
     const payload = {
@@ -3108,29 +3926,82 @@ const sendDailyReport = useCallback((dateParam) => {
 
   useEffect(() => {
     if (currentPage !== 'hr') return;
+    if (hrTab === 'people') loadPeople();
+    if (hrTab === 'badges') {
+      loadPeople();
+      loadBadges();
+    }
+    if (hrTab === 'host-presets') loadHostPresets();
+    if (hrTab === 'vehicle-presets') loadVehiclePresets();
     if (hrTab === 'absence-types') loadAbsenceTypes();
     if (hrTab === 'absence-records') {
+      loadPeople();
       loadAbsenceRecords();
       loadAbsenceTypes();
     }
     if (hrTab === 'shifts') loadWorkShifts();
     if (hrTab === 'assignments') {
+      loadPeople();
       loadShiftAssignments();
       loadWorkShifts();
     }
+    if (hrTab === 'attendance') {
+      loadPeople();
+    }
     if (hrTab === 'payroll') {
+      loadPeople();
       loadPayrollProfiles();
     }
-  }, [currentPage, hrTab, loadAbsenceTypes, loadAbsenceRecords, loadWorkShifts, loadShiftAssignments, loadPayrollProfiles]);
+  }, [currentPage, hrTab, loadPeople, loadBadges, loadHostPresets, loadVehiclePresets, loadAbsenceTypes, loadAbsenceRecords, loadWorkShifts, loadShiftAssignments, loadPayrollProfiles]);
+
+  useEffect(() => {
+    if (!session || !canUseLocalApi) return;
+    if (currentPage === 'hr') return;
+    if (!canUseSecurityPanel && !canUseHrPanel) return;
+    loadHostPresets({ silent: true, activeOnly: true });
+    loadVehiclePresets({ silent: true, activeOnly: true });
+  }, [session, currentPage, canUseLocalApi, canUseSecurityPanel, canUseHrPanel, loadHostPresets, loadVehiclePresets]);
+
+  const activeHostPresetNames = useMemo(() => {
+    const rows = (Array.isArray(hostPresetRecords) ? hostPresetRecords : [])
+      .filter((item) => item?.is_active !== false)
+      .map((item) => (item?.name || '').trim())
+      .filter(Boolean);
+    return hostPresetsLoaded ? rows : HOST_PRESETS;
+  }, [hostPresetRecords, hostPresetsLoaded]);
+
+  const availableVehiclePresets = useMemo(() => {
+    if (!vehiclePresetsLoaded) return buildFallbackVehiclePresets();
+    return (Array.isArray(vehiclePresetRecords) ? vehiclePresetRecords : [])
+      .filter((item) => item?.is_active !== false)
+      .map((item, index) => {
+        const plate = (item?.plate || '').trim().toUpperCase();
+        const label = (item?.label || '').trim();
+        return {
+          ...item,
+          id: item?.id || `vehicle-preset-${index}`,
+          plate,
+          label,
+          display_name: item?.display_name || [plate, label].filter(Boolean).join(' - '),
+        };
+      });
+  }, [vehiclePresetRecords, vehiclePresetsLoaded]);
+
+  const vehiclePresetCategory = vehicleSubTab === 'company' ? 'company' : 'management';
+  const scopedVehiclePresets = useMemo(() => {
+    if (vehicleSubTab !== 'management' && vehicleSubTab !== 'company') return [];
+    return availableVehiclePresets.filter((item) => item.category === vehiclePresetCategory);
+  }, [availableVehiclePresets, vehiclePresetCategory, vehicleSubTab]);
+
   const smtpForm = smtpDraft || emailSettings || {};
   const isHostCustomValue = !!formData.host &&
-    !HOST_PRESETS.includes(formData.host) &&
+    !activeHostPresetNames.includes(formData.host) &&
     formData.host !== 'Fabrika Personeli' &&
     formData.host !== OTHER_HOST_VALUE &&
     formData.host !== UNSPECIFIED_HOST_VALUE &&
     formData.host !== 'Belirtilmedi' &&
     !STAFF_LIST.includes(formData.host);
-  const hostSelectValue = HOST_PRESETS.includes(formData.host)
+  const hostSelectValue = activeHostPresetNames.includes(formData.host)
     ? formData.host
     : (formData.host === 'Fabrika Personeli' || STAFF_LIST.includes(formData.host))
       ? 'Fabrika Personeli'
@@ -3143,8 +4014,12 @@ const sendDailyReport = useCallback((dateParam) => {
   const managementVehicleMatches = useMemo(() => {
     const query = upperTr(formData.plate || '').trim();
     if (!query) return [];
-    return MANAGEMENT_VEHICLES.filter((v) => upperTr(v).includes(query)).slice(0, 60);
-  }, [formData.plate]);
+    return scopedVehiclePresets.filter((vehicle) => upperTr(`${vehicle.plate} ${vehicle.label} ${vehicle.display_name || ''}`).includes(query)).slice(0, 60);
+  }, [formData.plate, scopedVehiclePresets]);
+  const selectedVehiclePreset = useMemo(() => {
+    return scopedVehiclePresets.find((vehicle) => isSameIdentifier(vehicle.plate, formData.plate));
+  }, [formData.plate, scopedVehiclePresets]);
+  const canUseOwnerDriverType = vehicleSubTab === 'management' && (!selectedVehiclePreset || selectedVehiclePreset.default_driver_type === 'owner');
   const staffDriverMatches = useMemo(() => {
     const query = upperTr(formData.driver || '').trim();
     if (!query) return [];
@@ -3177,12 +4052,12 @@ const sendDailyReport = useCallback((dateParam) => {
   if (!session) {
     return (
       <div className="min-h-screen app-shell app-container text-foreground font-sans p-4 flex items-center justify-center">
-        <Card className="w-full max-w-xl p-6 md:p-8" style={{ borderTop: '2px solid rgba(245,158,11,0.35)' }}>
+        <Card className="w-full max-w-xl p-6 md:p-8" style={{ borderTop: '2px solid hsl(217 91% 56% / 0.4)' }}>
           <div className="flex items-center gap-3 mb-6">
             <img src={logoImg} alt="Malhotra" className="h-10 w-auto object-contain" />
             <div>
-              <h1 className="text-xl font-bold">Malhotra Güvenlik Paneli</h1>
-              <div className="text-xs text-amber-400/70">Rol Bazlı Giriş</div>
+              <h1 className="text-base font-bold tracking-tight">Malhotra Güvenlik Paneli</h1>
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">Rol Bazlı Giriş</div>
             </div>
           </div>
 
@@ -3319,77 +4194,74 @@ const sendDailyReport = useCallback((dateParam) => {
   if (currentPage === 'dashboard') {
     return (
       <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
-        <header className="ui-header mb-6">
+        <header className="ui-header mb-4">
           <div className="flex items-center gap-3">
-            <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
+            <img src={logoImg} alt="Malhotra" className="h-9 w-auto object-contain" />
             <div>
-              <h1 className="text-xl font-bold">Malhotra Güvenlik Paneli</h1>
-              <div className="flex items-center gap-2 text-xs text-zinc-400">
-                {isOnline ? <span className="text-green-400 flex items-center gap-1"><Wifi size={12} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={12} /> Offline</span>}
-                <span>| {session?.user?.email || 'local'}</span>
+              <h1 className="text-base font-semibold tracking-tight">Malhotra Güvenlik Paneli</h1>
+              <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+                {isOnline ? <span className="text-emerald-400 flex items-center gap-1"><Wifi size={11} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={11} /> Offline</span>}
+                <span className="text-zinc-500">|</span>
+                <span>{session?.user?.email || 'local'}</span>
                 {totalQueueCount > 0 && (
                   <span className="ui-pill">Kuyruk: {totalQueueCount}</span>
                 )}
+                <span className="text-zinc-500">|</span>
+                <span className="text-zinc-500">v{BUILD_TIME}</span>
               </div>
-              <div className="text-[10px] text-zinc-500 mt-1 break-all">
-                Supabase: {supabaseUrl}
-                {supabaseDebug.lastError ? ` | Error: ${supabaseDebug.lastError}` : ''}
-                {supabaseDebug.lastCheckedAt ? ` | Check: ${new Date(supabaseDebug.lastCheckedAt).toLocaleTimeString('tr-TR')}` : ''}
-              </div>
-              <div className="text-[10px] text-zinc-500">Build: {BUILD_TIME}</div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 md:gap-3">
-            <Button onClick={handleSystemReset} variant="secondary" className="gap-2" title="Takili kalirsa sistemi yeniler">
-              <RefreshCw size={16} /> Yenile
-            </Button>
-            <Button onClick={recomputeActiveLogs} variant="secondary" className="gap-2" title="Aktif listeyi yeniden hesaplar">
-              <RotateCcw size={16} /> Aktifleri Yenile
-            </Button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button onClick={handleSystemReset} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Sistemi yenile">
+              <RefreshCw size={14} />
+            </button>
+            <button onClick={recomputeActiveLogs} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Aktifleri yenile">
+              <RotateCcw size={14} />
+            </button>
             {canUseSecurityPanel && (
-              <Button onClick={() => setCurrentPage('import')} variant="secondary" className="gap-2">
-                <Upload size={16} /> Veri Yükle
+              <Button onClick={() => setCurrentPage('import')} variant="secondary" size="sm" className="gap-1.5">
+                <Upload size={14} /> Veri Yükle
               </Button>
             )}
             {canUseSecurityPanel && (
-              <Button onClick={() => setCurrentPage('main')} variant="primary" className="gap-2">
-                <LogIn size={18} /> Giriş Paneli
+              <Button onClick={() => setCurrentPage('main')} variant="primary" size="sm" className="gap-1.5">
+                <LogIn size={14} /> Giriş Paneli
               </Button>
             )}
              {canUseHrPanel && (
-               <Button onClick={() => setCurrentPage('hr')} variant="secondary" className="gap-2">
-                 <Briefcase size={16} /> İK Paneli
+               <Button onClick={() => setCurrentPage('hr')} variant="secondary" size="sm" className="gap-1.5">
+                 <Briefcase size={14} /> İK Paneli
                </Button>
              )}
             {isDeveloperRole && (
-              <Button onClick={() => setCurrentPage('audit')} variant="secondary" className="gap-2">
-                <History size={16} /> Audit
+              <Button onClick={() => setCurrentPage('audit')} variant="secondary" size="sm" className="gap-1.5">
+                <History size={14} /> Audit
               </Button>
             )}
             {enhancedAuditEnabled && (
               <>
-                <Button onClick={exportAuditLogs} variant="secondary" className="gap-2">
-                  <FileText size={14} /> Export
+                <Button onClick={exportAuditLogs} variant="secondary" size="sm" className="gap-1.5">
+                  <FileText size={13} /> Export
                 </Button>
-                <Button onClick={clearAuditLogs} variant="secondary" className="gap-2">
-                  <Trash2 size={14} /> Temizle
+                <Button onClick={clearAuditLogs} variant="secondary" size="sm" className="gap-1.5">
+                  <Trash2 size={13} /> Temizle
                 </Button>
               </>
             )}
-            <Button onClick={handleRoleLogout} variant="destructive" className="gap-2">
-              <LogOut size={16} /> Çıkış Yap
+            <Button onClick={handleRoleLogout} variant="destructive" size="sm" className="gap-1.5">
+              <LogOut size={14} /> Çıkış
             </Button>
             {isElectron && (
-              <Button onClick={handleAppExit} variant="destructive" className="gap-2">
-                <LogOut size={18} /> Uygulamayı Kapat
+              <Button onClick={handleAppExit} variant="destructive" size="sm" className="gap-1.5">
+                <LogOut size={14} /> Kapat
               </Button>
             )}
           </div>
         </header>
 
         <main className="mb-6">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-            <h2 className="text-2xl font-bold flex items-center gap-2"><BarChart3 className="text-blue-400" /> Dashboard & İstatistikler</h2>
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+            <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-2"><BarChart3 className="text-blue-400" size={16} /> Dashboard</h2>
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={() => setSoundEnabled(!soundEnabled)}
@@ -3435,10 +4307,10 @@ const sendDailyReport = useCallback((dateParam) => {
           </div>
 
           {!liteMode && (
-          <div className="ui-panel mb-6">
+          <div className="ui-panel mb-4">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-              <div className="text-sm text-zinc-300">
-                Ekstra Ozellikler: {enabledFeatureCount}/4 aktif
+              <div className="text-xs text-zinc-400">
+                Ek Ozellikler: {enabledFeatureCount}/4 aktif
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant={optionalAttachmentsEnabled ? 'primary' : 'secondary'} onClick={() => toggleFeatureFlag('optionalAttachments')}>Ekler</Button>
@@ -3454,25 +4326,25 @@ const sendDailyReport = useCallback((dateParam) => {
           )}
 
           {!liteMode && (!showSyncPanel ? (
-            <div className="mb-6">
-              <Button onClick={() => setShowSyncPanel(true)} variant="secondary" className="gap-2">
-                <Zap size={16} className="text-yellow-400" /> Sync Durumu Göster
+            <div className="mb-4">
+              <Button onClick={() => setShowSyncPanel(true)} variant="ghost" size="sm" className="gap-1.5 text-xs text-zinc-400">
+                <Zap size={14} /> Sync Durumu
               </Button>
             </div>
           ) : (
-            <div className="ui-card p-4 mb-6">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-                <h3 className="text-lg font-bold flex items-center gap-2"><Zap className="text-yellow-400" /> Sync Durumu</h3>
-                <div className="flex gap-2">
-                  <Button onClick={handleManualSync} variant="secondary" className="gap-2">
-                    <RefreshCw size={16} /> Şimdi Eşitle
+            <div className="ui-card p-4 mb-4">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-2"><Zap size={14} className="text-blue-400" /> Sync Durumu</h3>
+                <div className="flex gap-1.5">
+                  <Button onClick={handleManualSync} variant="secondary" size="sm" className="gap-1.5 text-xs">
+                    <RefreshCw size={13} /> Eşitle
                   </Button>
-                  <Button onClick={() => setShowSyncPanel(false)} variant="ghost" className="text-muted-foreground">
+                  <Button onClick={() => setShowSyncPanel(false)} variant="ghost" size="sm" className="text-zinc-500 text-xs">
                     Gizle
                   </Button>
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mt-3">
                 <div className="ui-panel">
                   <div className="text-xs text-zinc-400">Kuyruk</div>
                   <div className="text-xl font-bold">{syncQueueCount}</div>
@@ -3649,26 +4521,26 @@ const sendDailyReport = useCallback((dateParam) => {
 
           {!liteMode && isElectron && (
             !showSmtpPanel ? (
-              <div className="mb-6">
-                <Button onClick={() => setShowSmtpPanel(true)} variant="secondary" className="gap-2">
-                  <Mail size={16} className="text-purple-400" /> SMTP Ayarlarını Göster
+              <div className="mb-4">
+                <Button onClick={() => setShowSmtpPanel(true)} variant="ghost" size="sm" className="gap-1.5 text-xs text-zinc-400">
+                  <Mail size={14} /> SMTP Ayarları
                 </Button>
               </div>
             ) : (
-              <div className="ui-card p-4 mb-6">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-                  <h3 className="text-lg font-bold flex items-center gap-2"><Mail className="text-purple-400" /> E-posta (SMTP)</h3>
-                  <div className="flex gap-2">
-                    <Button onClick={handleTestSmtp} variant="secondary" className="gap-2">
-                      <CheckCircle size={16} /> Test
+              <div className="ui-card p-4 mb-4">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-2"><Mail size={14} className="text-blue-400" /> E-posta (SMTP)</h3>
+                  <div className="flex gap-1.5">
+                    <Button onClick={handleTestSmtp} variant="secondary" size="sm" className="gap-1.5 text-xs">
+                      <CheckCircle size={13} /> Test
                     </Button>
-                    <Button onClick={handleRunEmailSchedulerNow} variant="secondary" className="gap-2" disabled={smtpRunNowLoading}>
-                      <Send size={16} /> {smtpRunNowLoading ? 'Calisiyor...' : 'Gunluk Tetikle'}
+                    <Button onClick={handleRunEmailSchedulerNow} variant="secondary" size="sm" className="gap-1.5 text-xs" disabled={smtpRunNowLoading}>
+                      <Send size={13} /> {smtpRunNowLoading ? 'Calisiyor...' : 'Tetikle'}
                     </Button>
-                    <Button onClick={handleSaveSmtpSettings} variant="primary" className="gap-2">
-                      <CheckCircle size={16} /> Kaydet
+                    <Button onClick={handleSaveSmtpSettings} variant="primary" size="sm" className="gap-1.5 text-xs">
+                      <CheckCircle size={13} /> Kaydet
                     </Button>
-                    <Button onClick={() => setShowSmtpPanel(false)} variant="ghost" className="text-muted-foreground">
+                    <Button onClick={() => setShowSmtpPanel(false)} variant="ghost" size="sm" className="text-zinc-500 text-xs">
                       Gizle
                     </Button>
                   </div>
@@ -3848,12 +4720,52 @@ const sendDailyReport = useCallback((dateParam) => {
           )}
 
           {!liteMode && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-            <div className="bg-gradient-to-br from-amber-600/90 to-amber-800/80 p-5 rounded-xl shadow-lg border border-amber-500/20"><div className="flex items-center justify-between"><div><p className="text-amber-200 text-sm font-medium">Bugün Toplam</p><p className="text-3xl font-bold text-white mt-1">{stats.today}</p></div><Activity className="text-amber-300" size={40} /></div></div>
-            <div className="bg-gradient-to-br from-emerald-600/90 to-emerald-800/80 p-5 rounded-xl shadow-lg border border-emerald-500/20"><div className="flex items-center justify-between"><div><p className="text-emerald-200 text-sm font-medium">Şu An İçeride</p><p className="text-3xl font-bold text-white mt-1">{stats.activeNow}</p></div><Users className="text-emerald-300" size={40} /></div></div>
-            <div className={`bg-gradient-to-br ${stats.longStayCount > 0 ? 'from-red-600/90 to-red-800/80 border-red-500/20' : 'from-zinc-700/80 to-zinc-800/80 border-zinc-600/20'} p-5 rounded-xl shadow-lg border`}><div className="flex items-center justify-between"><div><p className={stats.longStayCount > 0 ? 'text-red-200' : 'text-zinc-300'}>4+ Saat İçeride</p><p className="text-3xl font-bold text-white mt-1">{stats.longStayCount}</p></div><AlertCircle className={stats.longStayCount > 0 ? 'text-red-300 animate-pulse' : 'text-zinc-400'} size={40} /></div></div>
-            <div className="bg-gradient-to-br from-orange-600/90 to-orange-800/80 p-5 rounded-xl shadow-lg border border-orange-500/20"><div className="flex items-center justify-between"><div><p className="text-orange-200 text-sm font-medium">Bu Hafta</p><p className="text-3xl font-bold text-white mt-1">{stats.week}</p></div><TrendingUp className="text-orange-300" size={40} /></div></div>
-            <div className="bg-gradient-to-br from-yellow-600/90 to-amber-800/80 p-5 rounded-xl shadow-lg border border-yellow-500/20"><div className="flex items-center justify-between"><div><p className="text-yellow-200 text-sm font-medium">Ort. Kalış Süresi</p><p className="text-2xl font-bold text-white mt-1">{Math.floor(stats.avgStayMins / 60)}s {stats.avgStayMins % 60}dk</p></div><Timer className="text-yellow-300" size={40} /></div></div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            <div className="ui-card p-4 border-l-2 border-l-amber-500 hover:bg-card/90 transition-colors">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">Bugün Toplam</p>
+                  <p className="text-3xl font-bold text-amber-400 mt-1">{stats.today}</p>
+                </div>
+                <Activity className="text-amber-500/40" size={28} />
+              </div>
+            </div>
+            <div className="ui-card p-4 border-l-2 border-l-emerald-500 hover:bg-card/90 transition-colors">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">Şu An İçeride</p>
+                  <p className="text-3xl font-bold text-emerald-400 mt-1">{stats.activeNow}</p>
+                </div>
+                <Users className="text-emerald-500/40" size={28} />
+              </div>
+            </div>
+            <div className={`ui-card p-4 border-l-2 hover:bg-card/90 transition-colors ${stats.longStayCount > 0 ? 'border-l-red-500' : 'border-l-zinc-600'}`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">4+ Saat İçeride</p>
+                  <p className={`text-3xl font-bold mt-1 ${stats.longStayCount > 0 ? 'text-red-400' : 'text-zinc-500'}`}>{stats.longStayCount}</p>
+                </div>
+                <AlertCircle className={stats.longStayCount > 0 ? 'text-red-500/50 animate-pulse-subtle' : 'text-zinc-600'} size={28} />
+              </div>
+            </div>
+            <div className="ui-card p-4 border-l-2 border-l-blue-500 hover:bg-card/90 transition-colors">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">Bu Hafta</p>
+                  <p className="text-3xl font-bold text-blue-400 mt-1">{stats.week}</p>
+                </div>
+                <TrendingUp className="text-blue-500/40" size={28} />
+              </div>
+            </div>
+            <div className="ui-card p-4 border-l-2 border-l-zinc-500 hover:bg-card/90 transition-colors">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">Ort. Kalış Süresi</p>
+                  <p className="text-2xl font-bold text-zinc-200 mt-1">{Math.floor(stats.avgStayMins / 60)}s {stats.avgStayMins % 60}dk</p>
+                </div>
+                <Timer className="text-zinc-500/40" size={28} />
+              </div>
+            </div>
           </div>
           )}
 
@@ -3862,21 +4774,21 @@ const sendDailyReport = useCallback((dateParam) => {
           <div className="space-y-3">
             {/* Özet satırı */}
             <div className="grid grid-cols-4 gap-2">
-              <div className="bg-zinc-900 border border-zinc-700 p-3 rounded text-center">
-                <div className="text-xs text-green-400 font-bold">GİRİŞ</div>
-                <div className="text-2xl font-bold text-white">{todayCounts.entry}</div>
+              <div className="bg-black/30 border border-emerald-600/30 p-3 rounded text-center border-l-2 border-l-emerald-500">
+                <div className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">GİRİŞ</div>
+                <div className="text-2xl font-bold text-emerald-400 mt-0.5">{todayCounts.entry}</div>
               </div>
-              <div className="bg-zinc-900 border border-zinc-700 p-3 rounded text-center">
-                <div className="text-xs text-red-400 font-bold">ÇIKIŞ</div>
-                <div className="text-2xl font-bold text-white">{todayCounts.exit}</div>
+              <div className="bg-black/30 border border-red-600/30 p-3 rounded text-center border-l-2 border-l-red-500">
+                <div className="text-[10px] text-red-400 font-bold uppercase tracking-wider">ÇIKIŞ</div>
+                <div className="text-2xl font-bold text-red-400 mt-0.5">{todayCounts.exit}</div>
               </div>
-              <div className="bg-zinc-900 border border-green-600/40 p-3 rounded text-center">
-                <div className="text-xs text-orange-400 font-bold">İÇERİDE</div>
-                <div className="text-2xl font-bold text-green-400">{activeLogs.length}</div>
+              <div className="bg-black/30 border border-blue-600/30 p-3 rounded text-center border-l-2 border-l-blue-500">
+                <div className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">İÇERİDE</div>
+                <div className="text-2xl font-bold text-blue-400 mt-0.5">{activeLogs.length}</div>
               </div>
-              <div className={`bg-zinc-900 border p-3 rounded text-center ${longStayCount > 0 ? 'border-red-500/60' : 'border-zinc-700'}`}>
-                <div className="text-xs text-red-400 font-bold">4+ SAAT</div>
-                <div className={`text-2xl font-bold ${longStayCount > 0 ? 'text-red-400' : 'text-zinc-500'}`}>{longStayCount}</div>
+              <div className={`bg-black/30 border p-3 rounded text-center border-l-2 ${longStayCount > 0 ? 'border-red-500/50 border-l-red-500' : 'border-zinc-700/40 border-l-zinc-600'}`}>
+                <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">4+ SAAT</div>
+                <div className={`text-2xl font-bold mt-0.5 ${longStayCount > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{longStayCount}</div>
               </div>
             </div>
 
@@ -3901,7 +4813,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   {activeLogs.slice(0, 20).map(log => (
                     <div key={log.id} className="flex justify-between text-zinc-400 py-0.5">
                       <span className="text-zinc-200 truncate mr-2">{log.plate || log.name}</span>
-                      <span className="font-mono whitespace-nowrap">{new Date(log.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span className="font-mono whitespace-nowrap">{formatTrTime(log.created_at, { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                   ))}
                 </div>
@@ -3914,7 +4826,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   {recentExitedLogs.map(log => (
                     <div key={log.id} className="flex justify-between text-zinc-400 py-0.5">
                       <span className="text-zinc-200">{log.plate || log.name}</span>
-                      <span className="font-mono">{new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span className="font-mono">{formatTrTime(log.exit_at, { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                   ))}
                 </div>
@@ -3935,68 +4847,94 @@ const sendDailyReport = useCallback((dateParam) => {
           ) : (
           /* ===== FULL MODE: tüm dashboard detayları ===== */
           <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="ui-card p-5">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Clock className="text-blue-400" /> Bugün Detay</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center p-3 bg-zinc-900 rounded"><span className="flex items-center gap-2"><Car className="text-blue-400" size={18} /> Araç Girişi</span><span className="font-bold text-xl">{stats.todayVehicle}</span></div>
-                <div className="flex justify-between items-center p-3 bg-zinc-900 rounded"><span className="flex items-center gap-2"><User className="text-purple-400" size={18} /> Ziyaretçi</span><span className="font-bold text-xl">{stats.todayVisitor}</span></div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="ui-card p-4">
+              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Clock className="text-blue-400" size={14} /> Bugün Detay</h3>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center p-2.5 bg-black/30 rounded border border-zinc-700/30">
+                  <span className="flex items-center gap-2 text-sm"><Car className="text-blue-400" size={16} /> Araç Girişi</span>
+                  <span className="font-bold text-lg text-blue-400">{stats.todayVehicle}</span>
+                </div>
+                <div className="flex justify-between items-center p-2.5 bg-black/30 rounded border border-zinc-700/30">
+                  <span className="flex items-center gap-2 text-sm"><User className="text-purple-400" size={16} /> Ziyaretçi</span>
+                  <span className="font-bold text-lg text-purple-400">{stats.todayVisitor}</span>
+                </div>
               </div>
             </div>
 
-            <div className="ui-card p-5">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><PieChart className="text-green-400" /> Kategori Dağılımı</h3>
-              <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                {Object.entries(stats.categoryStats).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([cat, count]) => (
-                  <div key={cat} className="flex justify-between items-center p-2 bg-zinc-900 rounded text-sm"><span className="truncate">{cat}</span><span className="font-bold bg-zinc-700 px-2 py-1 rounded">{count}</span></div>
-                ))}
+            <div className="ui-card p-4">
+              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><PieChart className="text-emerald-400" size={14} /> Kategori Dağılımı</h3>
+              <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                {Object.entries(stats.categoryStats).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([cat, count]) => {
+                  const total = Object.values(stats.categoryStats).reduce((a, b) => a + b, 0);
+                  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                  return (
+                    <div key={cat} className="flex items-center gap-2 p-2 bg-black/20 rounded text-sm border border-zinc-700/20">
+                      <span className="truncate flex-1 text-zinc-300">{cat}</span>
+                      <div className="w-16 bg-zinc-800 rounded h-1.5"><div className="h-1.5 rounded bg-emerald-500/60" style={{ width: `${pct}%` }}></div></div>
+                      <span className="font-bold text-zinc-200 tabular-nums w-8 text-right">{count}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
-            <div className="ui-card p-5">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><TrendingUp className="text-orange-400" /> Son 7 Gün</h3>
-              <div className="flex items-end justify-between h-[150px] gap-2">
+            <div className="ui-card p-4">
+              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><TrendingUp className="text-blue-400" size={14} /> Son 7 Gün</h3>
+              <div className="flex items-end justify-between h-[150px] gap-1.5">
                 {stats.dailyStats.map((day, idx) => {
                   const maxCount = Math.max(...stats.dailyStats.map(d => d.count), 1);
                   const height = (day.count / maxCount) * 100;
                   return (
-                    <div key={idx} className="flex flex-col items-center flex-1"><span className="text-xs font-bold mb-1">{day.count}</span><div className="w-full bg-gradient-to-t from-blue-600 to-blue-400 rounded-t transition-all" style={{ height: `${Math.max(height, 5)}%` }}></div><span className="text-[10px] text-zinc-400 mt-1 text-center">{day.date}</span></div>
+                    <div key={idx} className="flex flex-col items-center flex-1">
+                      <span className="text-[10px] font-bold mb-1 text-zinc-300 tabular-nums">{day.count}</span>
+                      <div className="w-full bg-blue-500/70 rounded-sm transition-all" style={{ height: `${Math.max(height, 4)}%` }}></div>
+                      <span className="text-[9px] text-zinc-500 mt-1 text-center">{day.date}</span>
+                    </div>
                   );
                 })}
               </div>
             </div>
           </div>
 
-          <div className="mt-6 ui-card p-5">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Layers className="text-yellow-400" /> Bugünkü Vardiya Dağılımı</h3>
-            <div className="grid grid-cols-3 gap-4">
-              {['Vardiya 1 (08:00-16:00)', 'Vardiya 2 (16:00-00:00)', 'Vardiya 3 (00:00-08:00)'].map(shift => (
-                <div key={shift} className={`p-4 rounded-xl text-center ${currentShift === shift ? 'bg-blue-600' : 'bg-zinc-900'}`}><p className="text-sm text-zinc-300">{shift.split(' ')[0]} {shift.split(' ')[1]}</p><p className="text-2xl font-bold mt-1">{stats.shiftStats[shift] || 0}</p></div>
-              ))}
+          <div className="mt-4 ui-card p-4">
+            <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Layers className="text-blue-400" size={14} /> Bugünkü Vardiya Dağılımı</h3>
+            <div className="grid grid-cols-3 gap-3">
+              {['Vardiya 1 (08:00-16:00)', 'Vardiya 2 (16:00-00:00)', 'Vardiya 3 (00:00-08:00)'].map(shift => {
+                const isActive = currentShift === shift;
+                const count = stats.shiftStats[shift] || 0;
+                return (
+                  <div key={shift} className={`p-3 rounded text-center border transition-colors ${isActive ? 'bg-primary/10 border-primary/30' : 'bg-black/20 border-zinc-700/30'}`}>
+                    <p className="text-xs text-zinc-400 font-medium">{shift.split(' ')[0]} {shift.split(' ')[1]}</p>
+                    <p className={`text-2xl font-bold mt-1 ${isActive ? 'text-primary' : 'text-zinc-300'}`}>{count}</p>
+                    {isActive && <span className="text-[8px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-bold mt-1 inline-block">AKTİF</span>}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-            <div className="ui-card p-5">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Star className="text-yellow-400" /> Sık Gelen Araç/Ziyaretçiler</h3>
-              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div className="ui-card p-4">
+              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Star className="text-amber-400" size={14} /> Sık Gelen Araç/Ziyaretçiler</h3>
+              <div className="space-y-1.5 max-h-[300px] overflow-y-auto">
                 {frequentVisitors.length > 0 ? frequentVisitors.map((visitor, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-zinc-900 rounded-lg hover:bg-zinc-700 transition-all group">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${idx < 3 ? 'bg-yellow-500 text-black' : 'bg-zinc-700 text-white'}`}>{idx + 1}</div>
-                      <div><p className="font-bold text-white">{visitor.key}</p><p className="text-xs text-zinc-400">{visitor.category} • {visitor.host}</p></div>
+                  <div key={idx} className="flex items-center justify-between p-2.5 bg-black/20 rounded border border-zinc-700/20 hover:border-zinc-600/40 transition-all group">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold ${idx < 3 ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-400'}`}>{idx + 1}</div>
+                      <div><p className="font-semibold text-white text-sm">{visitor.key}</p><p className="text-[10px] text-zinc-500">{visitor.category} • {visitor.host}</p></div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-right"><p className="font-bold text-blue-400">{visitor.count} kez</p><p className="text-[10px] text-zinc-500">Son: {new Date(visitor.lastVisit).toLocaleDateString('tr-TR')}</p></div>
-                      <button onClick={() => quickEntry(visitor.key, visitor.category, visitor.host)} className="opacity-0 group-hover:opacity-100 bg-green-600 hover:bg-green-500 text-white p-2 rounded transition-all" title="Hızlı Giriş"><Zap size={14} /></button>
+                    <div className="flex items-center gap-2">
+                      <div className="text-right"><p className="font-bold text-blue-400 text-sm tabular-nums">{visitor.count}x</p><p className="text-[9px] text-zinc-500">Son: {formatTrDate(visitor.lastVisit)}</p></div>
+                      <button onClick={() => quickEntry(visitor.key, visitor.category, visitor.host)} className="opacity-0 group-hover:opacity-100 bg-emerald-600 hover:bg-emerald-500 text-white p-1.5 rounded transition-all" title="Hızlı Giriş"><Zap size={12} /></button>
                     </div>
                   </div>
-                )) : <div className="text-center text-zinc-500 py-8 italic">Henüz yeterli veri yok</div>}
+                )) : <div className="ui-empty">Henüz yeterli veri yok</div>}
               </div>
             </div>
 
-            <div className="ui-card p-5">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Zap className="text-green-400" /> Hızlı İşlemler</h3>
+            <div className="ui-card p-4">
+              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Zap className="text-emerald-400" size={14} /> Hızlı İşlemler</h3>
               <div className="space-y-4">
                 <div className="ui-panel-lg">
                   <div className="flex justify-between items-center mb-3"><span className="text-zinc-400 text-sm">Şu an içeride</span><span className="text-2xl font-bold text-green-400">{activeLogs.length}</span></div>
@@ -4024,7 +4962,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     {recentExitedLogs.map(log => (
                       <div key={log.id} className="flex justify-between items-center text-sm text-zinc-300">
                         <span>{log.plate || log.name}</span>
-                        <span className="text-zinc-500">{new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="text-zinc-500">{formatTrTime(log.exit_at, { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     ))}
                   </div>
@@ -4081,7 +5019,7 @@ const sendDailyReport = useCallback((dateParam) => {
     );
   }
 
-  // === CSV İÇE AKTAR ===
+  // === CSV / EXCEL İÇE AKTAR ===
   if (currentPage === 'import') {
     const progressTotal = importProgress?.total || 0;
     const progressDone = importProgress?.processed || 0;
@@ -4114,14 +5052,17 @@ const sendDailyReport = useCallback((dateParam) => {
           <Card className="p-6 space-y-4">
             <div className="flex items-center gap-2">
               <Folder className="text-blue-400" />
-              <h2 className="text-xl font-bold">CSV İçeri Aktar</h2>
+              <h2 className="text-xl font-bold">CSV / Excel İçeri Aktar</h2>
             </div>
             <p className="text-sm text-zinc-400">
-              CSV dosyası seçin. Kayıtlar <code className="text-xs">created_at</code> alanına göre eşleştirilir; aynı zaman damgası varsa güncellenir.
+              CSV veya Excel dosyası seçin. Kayıtlar <code className="text-xs">created_at</code> alanına göre eşleştirilir; aynı zaman damgası varsa güncellenir.
             </p>
             <p className="text-xs text-zinc-500">
               Beklenen kolonlar: event_type, type, sub_category, shift, plate, driver, name, host, note, location, seal_number,
               seal_number_entry, seal_number_exit, tc_no, phone, user_email, created_at, exit_at.
+            </p>
+            <p className="text-xs text-zinc-500">
+              Ayrı <code className="text-xs">TARİH</code> + <code className="text-xs">GİRİŞ/ÇIKIŞ</code> kolonları olan araç Excel dosyaları da desteklenir.
             </p>
 
             {!isElectron && (
@@ -4131,11 +5072,11 @@ const sendDailyReport = useCallback((dateParam) => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-              <FormField label="CSV Dosyası" htmlFor="csv-import-file">
+              <FormField label="CSV / Excel Dosyası" htmlFor="csv-import-file">
                 <input
                   id="csv-import-file"
                   type="file"
-                  accept=".csv,text/csv"
+                  accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                   className="ui-input"
                   onChange={handleImportFileChange}
                   disabled={importing}
@@ -4152,7 +5093,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 {importing ? 'Yükleniyor...' : 'Yüklemeyi Başlat'}
               </Button>
               <Button
-                onClick={() => { setImportFile(null); setImportFileName(''); setImportResult(null); setImportError(''); setImportProgress({ processed: 0, total: 0 }); }}
+                onClick={() => { setImportFile(null); setImportFileName(''); setImportResult(null); setImportError(''); setImportWarnings([]); setImportProgress({ processed: 0, total: 0 }); }}
                 variant="secondary"
                 disabled={importing}
               >
@@ -4176,6 +5117,21 @@ const sendDailyReport = useCallback((dateParam) => {
                 <div>Güncellenen: {importResult.updated ?? 0}</div>
                 <div>Geçersiz: {importResult.invalid ?? 0}</div>
                 <div>Hatalı: {importResult.errors ?? 0}</div>
+                <div>Uyarı: {importResult.warningCount ?? 0}</div>
+              </div>
+            )}
+
+            {importWarnings.length > 0 && (
+              <div className="ui-panel bg-amber-900/20 border border-amber-500/40 text-amber-100 text-sm space-y-1">
+                <div className="font-semibold">İçe Aktarma Uyarıları ve Engelleri</div>
+                {importWarnings.slice(0, 6).map((item) => (
+                  <div key={item.code}>
+                    {item.count}x - {item.message}
+                  </div>
+                ))}
+                {importWarnings.length > 6 && (
+                  <div>Toplam {importWarnings.length} farklı uyarı/engel kaydı gösteriliyor.</div>
+                )}
               </div>
             )}
 
@@ -4255,7 +5211,7 @@ const sendDailyReport = useCallback((dateParam) => {
               {(enhancedAuditEnabled ? filteredAuditLogs : auditLogs).map((item) => (
                 <div key={item.id} className="ui-panel text-xs">
                   <div className="text-zinc-300 font-semibold">{item.action}</div>
-                  <div className="text-zinc-500">{new Date(item.at).toLocaleString('tr-TR')}</div>
+                  <div className="text-zinc-500">{formatTrDateTime(item.at)}</div>
                   <div className="text-zinc-400">{item.user} | {item.role}</div>
                   {item.message ? <div className="text-zinc-300 break-words mt-1">{item.message}</div> : null}
                   {enhancedAuditEnabled && item.hash ? <div className="text-[10px] text-zinc-500 mt-1">#{item.hash}</div> : null}
@@ -4271,7 +5227,7 @@ const sendDailyReport = useCallback((dateParam) => {
               {serverAuditLogs.map((item) => (
                 <div key={item.id} className="ui-panel text-xs">
                   <div className="text-zinc-300 font-semibold">{item.action}</div>
-                  <div className="text-zinc-500">{new Date(item.created_at).toLocaleString('tr-TR')}</div>
+                  <div className="text-zinc-500">{formatTrDateTime(item.created_at)}</div>
                   <div className="text-zinc-400">
                     {(item.actor_user?.username || item.actor_user?.email || 'system')} | {item.object_type || '-'} | {item.object_id || '-'}
                   </div>
@@ -4400,6 +5356,10 @@ const sendDailyReport = useCallback((dateParam) => {
           </Card>
 
           <div className="ui-card p-3 flex flex-wrap gap-2">
+            <Button onClick={() => setHrTab('people')} variant={hrTab === 'people' ? 'primary' : 'secondary'} size="sm">Personeller</Button>
+            <Button onClick={() => setHrTab('badges')} variant={hrTab === 'badges' ? 'primary' : 'secondary'} size="sm">Badge'ler</Button>
+            <Button onClick={() => setHrTab('host-presets')} variant={hrTab === 'host-presets' ? 'primary' : 'secondary'} size="sm">Host Presetleri</Button>
+            <Button onClick={() => setHrTab('vehicle-presets')} variant={hrTab === 'vehicle-presets' ? 'primary' : 'secondary'} size="sm">Arac Presetleri</Button>
             <Button onClick={() => setHrTab('absence-types')} variant={hrTab === 'absence-types' ? 'primary' : 'secondary'} size="sm">Devamsızlık Türleri</Button>
             <Button onClick={() => setHrTab('absence-records')} variant={hrTab === 'absence-records' ? 'primary' : 'secondary'} size="sm">Devamsızlık Kayıtları</Button>
             <Button onClick={() => setHrTab('shifts')} variant={hrTab === 'shifts' ? 'primary' : 'secondary'} size="sm">Vardiyalar</Button>
@@ -4411,6 +5371,399 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrError && (
             <div className="ui-card p-3 border border-red-500 text-red-300 text-sm">
               {hrError}
+            </div>
+          )}
+
+          {hrTab === 'people' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card className="p-4">
+                <h3 className="text-lg font-bold mb-3">Yeni Personel</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <FormField label="Ad Soyad">
+                    <input className="ui-input" value={personDraft.full_name} onChange={(e) => setPersonDraft({ ...personDraft, full_name: e.target.value })} placeholder="Ad Soyad" />
+                  </FormField>
+                  <FormField label="Tip">
+                    <select className="ui-input" value={personDraft.kind} onChange={(e) => setPersonDraft({ ...personDraft, kind: e.target.value })}>
+                      <option value="employee">Personel</option>
+                      <option value="visitor">Ziyaretci</option>
+                    </select>
+                  </FormField>
+                  <FormField label="TC No">
+                    <input className="ui-input" value={personDraft.tc_no} onChange={(e) => setPersonDraft({ ...personDraft, tc_no: e.target.value })} placeholder="12345678901" />
+                  </FormField>
+                  <FormField label="Telefon">
+                    <input className="ui-input" value={personDraft.phone} onChange={(e) => setPersonDraft({ ...personDraft, phone: e.target.value })} placeholder="555..." />
+                  </FormField>
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="checkbox" className="ui-checkbox" checked={personDraft.is_active} onChange={(e) => setPersonDraft({ ...personDraft, is_active: e.target.checked })} />
+                    Aktif
+                  </label>
+                </div>
+                <div className="mt-3">
+                  <Button onClick={createPerson} variant="primary" disabled={hrLoading}>Personel Ekle</Button>
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+                  <h3 className="text-lg font-bold">Personel Listesi</h3>
+                  <div className="flex gap-2">
+                    <input className="ui-input" value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Ad, TC veya telefon ara" />
+                    <Button onClick={() => loadPeople()} size="sm" variant="secondary">Ara</Button>
+                  </div>
+                </div>
+                <div className="ui-table-wrap max-h-[420px]">
+                  <table className="ui-table">
+                    <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
+                      <tr>
+                        <th className="p-3">Ad</th>
+                        <th className="p-3">Tip</th>
+                        <th className="p-3">TC / Telefon</th>
+                        <th className="p-3">Durum</th>
+                        <th className="p-3">Aksiyon</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-700">
+                      {people.map((person) => (
+                        <tr key={person.id}>
+                          <td className="p-3 text-sm font-semibold">{person.full_name}</td>
+                          <td className="p-3 text-xs">{person.kind === 'employee' ? 'Personel' : 'Ziyaretci'}</td>
+                          <td className="p-3 text-xs text-zinc-300">{person.tc_no || '-'} / {person.phone || '-'}</td>
+                          <td className="p-3 text-xs">
+                            <div className="flex flex-wrap gap-2">
+                              <span className={cx('inline-flex rounded px-2 py-1', person.is_inside ? 'bg-emerald-600/20 text-emerald-300' : 'bg-zinc-700 text-zinc-300')}>
+                                {person.is_inside ? 'Iceride' : 'Disarida'}
+                              </span>
+                              <span className={cx('inline-flex rounded px-2 py-1', person.is_active ? 'bg-blue-600/20 text-blue-300' : 'bg-amber-600/20 text-amber-300')}>
+                                {person.is_active ? 'Aktif' : 'Pasif'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-3 text-xs">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingPerson(person);
+                                  setPersonEditDraft({
+                                    kind: person.kind || 'employee',
+                                    full_name: person.full_name || '',
+                                    tc_no: person.tc_no || '',
+                                    phone: person.phone || '',
+                                    is_active: person.is_active !== false,
+                                  });
+                                }}
+                                className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
+                                title="Düzenle"
+                              >
+                                <Edit size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPersonActiveState(person, !person.is_active)}
+                                className="text-amber-400 hover:text-amber-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
+                                title={person.is_active ? 'Pasife al' : 'Aktif et'}
+                              >
+                                {person.is_active ? <UserMinus size={14} /> : <UserCheck size={14} />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {people.length === 0 && (
+                        <tr><td colSpan={5} className="ui-empty">Henüz personel bulunmuyor.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {hrTab === 'badges' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card className="p-4">
+                <h3 className="text-lg font-bold mb-3">Yeni Badge</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <FormField label="Personel">
+                    <select className="ui-input" value={badgeDraft.person} onChange={(e) => setBadgeDraft({ ...badgeDraft, person: e.target.value })}>
+                      <option value="">Seçin</option>
+                      {people.map((person) => (
+                        <option key={person.id} value={person.id}>{person.full_name}</option>
+                      ))}
+                    </select>
+                  </FormField>
+                  <FormField label="Tip">
+                    <select className="ui-input" value={badgeDraft.kind} onChange={(e) => setBadgeDraft({ ...badgeDraft, kind: e.target.value })}>
+                      <option value="card">Kart</option>
+                      <option value="qr">QR</option>
+                      <option value="barcode">Barkod</option>
+                    </select>
+                  </FormField>
+                  <FormField label="Kod">
+                    <input className="ui-input" value={badgeDraft.code} onChange={(e) => setBadgeDraft({ ...badgeDraft, code: e.target.value.toUpperCase() })} placeholder="CARD-0001" />
+                  </FormField>
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="checkbox" className="ui-checkbox" checked={badgeDraft.is_active} onChange={(e) => setBadgeDraft({ ...badgeDraft, is_active: e.target.checked })} />
+                    Aktif
+                  </label>
+                </div>
+                <div className="mt-3">
+                  <Button onClick={createBadge} variant="primary" disabled={hrLoading || people.length === 0}>Badge Ekle</Button>
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+                  <h3 className="text-lg font-bold">Badge Listesi</h3>
+                  <div className="flex gap-2">
+                    <input className="ui-input" value={badgeQuery} onChange={(e) => setBadgeQuery(e.target.value)} placeholder="Kod veya personel ara" />
+                    <Button onClick={() => loadBadges()} size="sm" variant="secondary">Ara</Button>
+                  </div>
+                </div>
+                <div className="ui-table-wrap max-h-[420px]">
+                  <table className="ui-table">
+                    <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
+                      <tr>
+                        <th className="p-3">Kod</th>
+                        <th className="p-3">Personel</th>
+                        <th className="p-3">Tip</th>
+                        <th className="p-3">Durum</th>
+                        <th className="p-3">Aksiyon</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-700">
+                      {badgeRecords.map((badge) => (
+                        <tr key={badge.id}>
+                          <td className="p-3 text-xs font-mono">{badge.code}</td>
+                          <td className="p-3 text-xs">{badge.person_name || badge.person}</td>
+                          <td className="p-3 text-xs uppercase">{badge.kind}</td>
+                          <td className="p-3 text-xs">{badge.is_active ? 'Aktif' : 'Pasif'}</td>
+                          <td className="p-3 text-xs">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingBadge(badge);
+                                  setBadgeEditDraft({
+                                    person: badge.person || '',
+                                    kind: badge.kind || 'card',
+                                    code: badge.code || '',
+                                    is_active: badge.is_active !== false,
+                                  });
+                                }}
+                                className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
+                                title="Düzenle"
+                              >
+                                <Edit size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setBadgeActiveState(badge, !badge.is_active)}
+                                className="text-amber-400 hover:text-amber-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
+                                title={badge.is_active ? 'Pasife al' : 'Aktif et'}
+                              >
+                                {badge.is_active ? <UserMinus size={14} /> : <UserCheck size={14} />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {badgeRecords.length === 0 && (
+                        <tr><td colSpan={5} className="ui-empty">Henüz badge bulunmuyor.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {hrTab === 'host-presets' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card className="p-4">
+                <h3 className="text-lg font-bold mb-3">Yeni Host Preset</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <FormField label="Ad">
+                    <input className="ui-input" value={hostPresetDraft.name} onChange={(e) => setHostPresetDraft({ ...hostPresetDraft, name: e.target.value })} placeholder="Yonetim, Satin Alma..." />
+                  </FormField>
+                  <FormField label="Sira">
+                    <input type="number" className="ui-input" value={hostPresetDraft.sort_order} onChange={(e) => setHostPresetDraft({ ...hostPresetDraft, sort_order: Number(e.target.value || 0) })} />
+                  </FormField>
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="checkbox" className="ui-checkbox" checked={hostPresetDraft.is_active} onChange={(e) => setHostPresetDraft({ ...hostPresetDraft, is_active: e.target.checked })} />
+                    Aktif
+                  </label>
+                </div>
+                <div className="mt-3">
+                  <Button onClick={createHostPreset} variant="primary" disabled={hrLoading}>Host Preset Ekle</Button>
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+                  <h3 className="text-lg font-bold">Host Preset Listesi</h3>
+                  <div className="flex gap-2">
+                    <input className="ui-input" value={hostPresetQuery} onChange={(e) => setHostPresetQuery(e.target.value)} placeholder="Host ara" />
+                    <Button onClick={() => loadHostPresets()} size="sm" variant="secondary">Ara</Button>
+                  </div>
+                </div>
+                <div className="ui-table-wrap max-h-[420px]">
+                  <table className="ui-table">
+                    <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
+                      <tr>
+                        <th className="p-3">Ad</th>
+                        <th className="p-3">Sira</th>
+                        <th className="p-3">Durum</th>
+                        <th className="p-3">Aksiyon</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-700">
+                      {hostPresetRecords.map((preset) => (
+                        <tr key={preset.id}>
+                          <td className="p-3 text-sm font-semibold">{preset.name}</td>
+                          <td className="p-3 text-xs">{preset.sort_order ?? 0}</td>
+                          <td className="p-3 text-xs">{preset.is_active ? 'Aktif' : 'Pasif'}</td>
+                          <td className="p-3 text-xs">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingHostPreset(preset);
+                                  setHostPresetEditDraft({
+                                    name: preset.name || '',
+                                    sort_order: Number(preset.sort_order || 0),
+                                    is_active: preset.is_active !== false,
+                                  });
+                                }}
+                                className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
+                                title="Duzenle"
+                              >
+                                <Edit size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setHostPresetActiveState(preset, !preset.is_active)}
+                                className="text-amber-400 hover:text-amber-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
+                                title={preset.is_active ? 'Pasife al' : 'Aktif et'}
+                              >
+                                {preset.is_active ? <UserMinus size={14} /> : <UserCheck size={14} />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {hostPresetRecords.length === 0 && (
+                        <tr><td colSpan={4} className="ui-empty">Henuz host preset bulunmuyor.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {hrTab === 'vehicle-presets' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card className="p-4">
+                <h3 className="text-lg font-bold mb-3">Yeni Arac Preset</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <FormField label="Plaka">
+                    <input className="ui-input uppercase font-mono" value={vehiclePresetDraft.plate} onChange={(e) => setVehiclePresetDraft({ ...vehiclePresetDraft, plate: e.target.value.toUpperCase() })} placeholder="34 ABC 123" />
+                  </FormField>
+                  <FormField label="Etiket">
+                    <input className="ui-input" value={vehiclePresetDraft.label} onChange={(e) => setVehiclePresetDraft({ ...vehiclePresetDraft, label: e.target.value })} placeholder="Goksel Onus / Sirket Araci" />
+                  </FormField>
+                  <FormField label="Kategori">
+                    <select className="ui-input" value={vehiclePresetDraft.category} onChange={(e) => setVehiclePresetDraft({ ...vehiclePresetDraft, category: e.target.value, default_driver_type: e.target.value === 'management' ? 'owner' : 'other' })}>
+                      <option value="management">Yonetim</option>
+                      <option value="company">Sirket</option>
+                    </select>
+                  </FormField>
+                  <FormField label="Varsayilan Surucu Tipi">
+                    <select className="ui-input" value={vehiclePresetDraft.default_driver_type} onChange={(e) => setVehiclePresetDraft({ ...vehiclePresetDraft, default_driver_type: e.target.value })}>
+                      <option value="owner">Arac Sahibi</option>
+                      <option value="other">Diger</option>
+                    </select>
+                  </FormField>
+                  <FormField label="Sira">
+                    <input type="number" className="ui-input" value={vehiclePresetDraft.sort_order} onChange={(e) => setVehiclePresetDraft({ ...vehiclePresetDraft, sort_order: Number(e.target.value || 0) })} />
+                  </FormField>
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="checkbox" className="ui-checkbox" checked={vehiclePresetDraft.is_active} onChange={(e) => setVehiclePresetDraft({ ...vehiclePresetDraft, is_active: e.target.checked })} />
+                    Aktif
+                  </label>
+                </div>
+                <div className="mt-3">
+                  <Button onClick={createVehiclePreset} variant="primary" disabled={hrLoading}>Arac Preset Ekle</Button>
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+                  <h3 className="text-lg font-bold">Arac Preset Listesi</h3>
+                  <div className="flex gap-2">
+                    <input className="ui-input" value={vehiclePresetQuery} onChange={(e) => setVehiclePresetQuery(e.target.value)} placeholder="Plaka veya etiket ara" />
+                    <Button onClick={() => loadVehiclePresets()} size="sm" variant="secondary">Ara</Button>
+                  </div>
+                </div>
+                <div className="ui-table-wrap max-h-[420px]">
+                  <table className="ui-table">
+                    <thead className="bg-zinc-900 text-zinc-200 sticky top-0">
+                      <tr>
+                        <th className="p-3">Plaka</th>
+                        <th className="p-3">Etiket</th>
+                        <th className="p-3">Kategori</th>
+                        <th className="p-3">Tip / Durum</th>
+                        <th className="p-3">Aksiyon</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-700">
+                      {vehiclePresetRecords.map((preset) => (
+                        <tr key={preset.id}>
+                          <td className="p-3 text-xs font-mono">{preset.plate}</td>
+                          <td className="p-3 text-xs">{preset.label || '-'}</td>
+                          <td className="p-3 text-xs">{preset.category === 'company' ? 'Sirket' : 'Yonetim'}</td>
+                          <td className="p-3 text-xs">{preset.default_driver_type === 'owner' ? 'Arac Sahibi' : 'Diger'} / {preset.is_active ? 'Aktif' : 'Pasif'}</td>
+                          <td className="p-3 text-xs">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingVehiclePreset(preset);
+                                  setVehiclePresetEditDraft({
+                                    plate: preset.plate || '',
+                                    label: preset.label || '',
+                                    category: preset.category || 'management',
+                                    default_driver_type: preset.default_driver_type || 'owner',
+                                    sort_order: Number(preset.sort_order || 0),
+                                    is_active: preset.is_active !== false,
+                                  });
+                                }}
+                                className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
+                                title="Duzenle"
+                              >
+                                <Edit size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setVehiclePresetActiveState(preset, !preset.is_active)}
+                                className="text-amber-400 hover:text-amber-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
+                                title={preset.is_active ? 'Pasife al' : 'Aktif et'}
+                              >
+                                {preset.is_active ? <UserMinus size={14} /> : <UserCheck size={14} />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {vehiclePresetRecords.length === 0 && (
+                        <tr><td colSpan={5} className="ui-empty">Henuz arac preset bulunmuyor.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
             </div>
           )}
 
@@ -4489,8 +5842,11 @@ const sendDailyReport = useCallback((dateParam) => {
               <Card className="p-4">
                 <h3 className="text-lg font-bold mb-3">Yeni Devamsızlık Kaydı</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <FormField label="Personel ID">
-                    <input className="ui-input" value={absenceRecordDraft.person} onChange={(e) => setAbsenceRecordDraft({ ...absenceRecordDraft, person: e.target.value })} placeholder="UUID" />
+                  <FormField label="Personel">
+                    <select className="ui-input" value={absenceRecordDraft.person} onChange={(e) => setAbsenceRecordDraft({ ...absenceRecordDraft, person: e.target.value })}>
+                      <option value="">Seçin</option>
+                      {people.map((person) => (<option key={person.id} value={person.id}>{person.full_name}</option>))}
+                    </select>
                   </FormField>
                   <FormField label="Tür">
                     <select className="ui-input" value={absenceRecordDraft.absence_type} onChange={(e) => setAbsenceRecordDraft({ ...absenceRecordDraft, absence_type: e.target.value })}>
@@ -4533,7 +5889,10 @@ const sendDailyReport = useCallback((dateParam) => {
                   <Button onClick={loadAbsenceRecords} size="sm" variant="secondary">Yenile</Button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-                  <input className="ui-input" placeholder="Personel ID" value={absenceRecordFilters.person_id} onChange={(e) => setAbsenceRecordFilters({ ...absenceRecordFilters, person_id: e.target.value })} />
+                  <select className="ui-input" value={absenceRecordFilters.person_id} onChange={(e) => setAbsenceRecordFilters({ ...absenceRecordFilters, person_id: e.target.value })}>
+                    <option value="">Personel: Tümü</option>
+                    {people.map((person) => (<option key={person.id} value={person.id}>{person.full_name}</option>))}
+                  </select>
                   <select className="ui-input" value={absenceRecordFilters.status} onChange={(e) => setAbsenceRecordFilters({ ...absenceRecordFilters, status: e.target.value })}>
                     <option value="">Durum: Tümü</option>
                     <option value="SUBMITTED">Gönderildi</option>
@@ -4560,8 +5919,8 @@ const sendDailyReport = useCallback((dateParam) => {
                         <tr key={r.id}>
                           <td className="p-3 text-xs">{r.person_name || r.person}</td>
                           <td className="p-3 text-xs">{r.absence_type_name || r.absence_type}</td>
-                          <td className="p-3 text-xs">{r.start_at ? new Date(r.start_at).toLocaleString('tr-TR') : '-'}</td>
-                          <td className="p-3 text-xs">{r.end_at ? new Date(r.end_at).toLocaleString('tr-TR') : '-'}</td>
+                          <td className="p-3 text-xs">{r.start_at ? formatTrDateTime(r.start_at) : '-'}</td>
+                          <td className="p-3 text-xs">{r.end_at ? formatTrDateTime(r.end_at) : '-'}</td>
                           <td className="p-3 text-xs">{r.status}</td>
                         </tr>
                       ))}
@@ -4647,8 +6006,11 @@ const sendDailyReport = useCallback((dateParam) => {
               <Card className="p-4">
                 <h3 className="text-lg font-bold mb-3">Vardiya Atama</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <FormField label="Personel ID">
-                    <input className="ui-input" value={assignmentDraft.person} onChange={(e) => setAssignmentDraft({ ...assignmentDraft, person: e.target.value })} />
+                  <FormField label="Personel">
+                    <select className="ui-input" value={assignmentDraft.person} onChange={(e) => setAssignmentDraft({ ...assignmentDraft, person: e.target.value })}>
+                      <option value="">Seçin</option>
+                      {people.map((person) => (<option key={person.id} value={person.id}>{person.full_name}</option>))}
+                    </select>
                   </FormField>
                   <FormField label="Vardiya">
                     <select className="ui-input" value={assignmentDraft.shift} onChange={(e) => setAssignmentDraft({ ...assignmentDraft, shift: e.target.value })}>
@@ -4711,8 +6073,11 @@ const sendDailyReport = useCallback((dateParam) => {
               <Card className="p-4">
                 <h3 className="text-lg font-bold mb-3">Puantaj Özeti</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <FormField label="Personel ID">
-                    <input className="ui-input" value={attendanceQuery.person_id} onChange={(e) => setAttendanceQuery({ ...attendanceQuery, person_id: e.target.value })} />
+                  <FormField label="Personel">
+                    <select className="ui-input" value={attendanceQuery.person_id} onChange={(e) => setAttendanceQuery({ ...attendanceQuery, person_id: e.target.value })}>
+                      <option value="">Seçin</option>
+                      {people.map((person) => (<option key={person.id} value={person.id}>{person.full_name}</option>))}
+                    </select>
                   </FormField>
                   <FormField label="Başlangıç Tarihi">
                     <input type="date" className="ui-input" value={attendanceQuery.date_from} onChange={(e) => setAttendanceQuery({ ...attendanceQuery, date_from: e.target.value })} />
@@ -4765,8 +6130,8 @@ const sendDailyReport = useCallback((dateParam) => {
                           <tr key={d.date}>
                             <td className="p-3 text-xs">{d.date}</td>
                             <td className="p-3 text-xs">{d.shift?.name || '-'}</td>
-                            <td className="p-3 text-xs">{d.first_in ? new Date(d.first_in).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
-                            <td className="p-3 text-xs">{d.last_out ? new Date(d.last_out).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                            <td className="p-3 text-xs">{d.first_in ? formatTrTime(d.first_in, { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                            <td className="p-3 text-xs">{d.last_out ? formatTrTime(d.last_out, { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                             <td className="p-3 text-xs">{d.total_minutes}</td>
                             <td className="p-3 text-xs">{d.late_minutes}</td>
                             <td className="p-3 text-xs">{d.early_leave_minutes}</td>
@@ -4790,8 +6155,11 @@ const sendDailyReport = useCallback((dateParam) => {
                 <Card className="p-4">
                   <h3 className="text-lg font-bold mb-3">Payroll Profil Oluştur</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <FormField label="Personel ID">
-                      <input className="ui-input" value={payrollProfileDraft.person} onChange={(e) => setPayrollProfileDraft({ ...payrollProfileDraft, person: e.target.value })} placeholder="UUID" />
+                    <FormField label="Personel">
+                      <select className="ui-input" value={payrollProfileDraft.person} onChange={(e) => setPayrollProfileDraft({ ...payrollProfileDraft, person: e.target.value })}>
+                        <option value="">Seçin</option>
+                        {people.map((person) => (<option key={person.id} value={person.id}>{person.full_name}</option>))}
+                      </select>
                     </FormField>
                     <FormField label="Ücret Tipi">
                       <select className="ui-input" value={payrollProfileDraft.salary_type} onChange={(e) => setPayrollProfileDraft({ ...payrollProfileDraft, salary_type: e.target.value })}>
@@ -4864,8 +6232,11 @@ const sendDailyReport = useCallback((dateParam) => {
               <Card className="p-4">
                 <h3 className="text-lg font-bold mb-3">Bordro Özeti</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <FormField label="Personel ID (opsiyonel)">
-                    <input className="ui-input" value={payrollSummaryQuery.person_id} onChange={(e) => setPayrollSummaryQuery({ ...payrollSummaryQuery, person_id: e.target.value })} />
+                  <FormField label="Personel (opsiyonel)">
+                    <select className="ui-input" value={payrollSummaryQuery.person_id} onChange={(e) => setPayrollSummaryQuery({ ...payrollSummaryQuery, person_id: e.target.value })}>
+                      <option value="">Tümü</option>
+                      {people.map((person) => (<option key={person.id} value={person.id}>{person.full_name}</option>))}
+                    </select>
                   </FormField>
                   <FormField label="Başlangıç">
                     <input type="date" className="ui-input" value={payrollSummaryQuery.date_from} onChange={(e) => setPayrollSummaryQuery({ ...payrollSummaryQuery, date_from: e.target.value })} />
@@ -4936,7 +6307,7 @@ const sendDailyReport = useCallback((dateParam) => {
                         {sgkReport.summary?.map((row, idx) => (
                           <tr key={`${row.sgk_code}-${row.person_id}-${idx}`}>
                             <td className="p-3 text-xs">{row.sgk_code}</td>
-                            <td className="p-3 text-xs">{row.person_id}</td>
+                            <td className="p-3 text-xs">{row.person_name || row.person_id}</td>
                             <td className="p-3 text-xs">{row.missing_days || 0}</td>
                             <td className="p-3 text-xs">{row.missing_hours || 0}</td>
                           </tr>
@@ -4960,96 +6331,123 @@ const sendDailyReport = useCallback((dateParam) => {
   return (
     <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
       {!isOnline && (
-        <div className="ui-alert ui-alert-danger mb-4">
-          <div className="flex items-center gap-2 font-bold">
-            <WifiOff size={20} />
-            <span>İNTERNET BAĞLANTISI YOK - OFFLINE MOD</span>
+        <div className="ui-alert ui-alert-danger mb-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <WifiOff size={16} />
+            <span>Bağlantı yok — Offline mod</span>
           </div>
           <div className="ui-pill">Bekleyen: {pendingCount}</div>
         </div>
       )}
       {isOnline && pendingCount > 0 && (
-        <div className="ui-alert ui-alert-warning mb-4">
-          <div className="flex items-center gap-2 font-bold">
-            <AlertCircle size={20} />
-            <span>{pendingCount} bekleyen kayıt var</span>
+        <div className="ui-alert ui-alert-warning mb-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <AlertCircle size={16} />
+            <span>{pendingCount} bekleyen kayıt</span>
           </div>
-          <div className="flex gap-2">
-            <Button onClick={() => { localStorage.removeItem(OFFLINE_QUEUE_KEY); checkPendingData(); showToast("Kuyruk temizlendi", "info"); }} variant="destructive" size="sm" className="gap-1">
-              <Trash2 size={14} /> Temizle
+          <div className="flex gap-1.5">
+            <Button onClick={() => { localStorage.removeItem(OFFLINE_QUEUE_KEY); checkPendingData(); showToast("Kuyruk temizlendi", "info"); }} variant="destructive" size="sm" className="gap-1 text-xs">
+              <Trash2 size={12} /> Temizle
             </Button>
-            <Button onClick={syncOfflineData} variant="secondary" size="sm" className="gap-2">
-              <RefreshCw size={16} /> Gönder
+            <Button onClick={syncOfflineData} variant="secondary" size="sm" className="gap-1 text-xs">
+              <RefreshCw size={12} /> Gönder
             </Button>
           </div>
         </div>
       )}
+      {initialSyncState.active && (
+        <div className="ui-alert ui-alert-info mb-3 animate-fade-in">
+          <div className="flex items-center gap-2.5">
+            <RefreshCw size={16} className="animate-spin text-blue-400" />
+            <div>
+              <div className="text-sm font-medium text-blue-200">Senkronizasyon yapiliyor...</div>
+              <div className="text-xs text-blue-300/60">Supabase'den veriler indiriliyor.</div>
+            </div>
+          </div>
+        </div>
+      )}
+      {initialSyncState.done && initialSyncState.count > 0 && (
+        <div className="ui-alert mb-3 animate-fade-in border-emerald-500/30 bg-emerald-500/10">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle size={16} className="text-emerald-400" />
+            <div>
+              <div className="text-sm font-medium text-emerald-200">Senkronizasyon tamamlandi</div>
+              <div className="text-xs text-emerald-300/60">{initialSyncState.count} kayit indirildi.</div>
+            </div>
+          </div>
+        </div>
+      )}
 
-      <header className="ui-header mb-6">
+      <header className="ui-header mb-4">
         <div className="flex items-center gap-3">
-          <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
+          <img src={logoImg} alt="Malhotra" className="h-9 w-auto object-contain" />
           <div>
-            <h1 className="text-xl font-bold">Malhotra Güvenlik Paneli</h1>
-            <div className="flex items-center gap-2 text-xs text-zinc-400">
-              {isOnline ? <span className="text-green-400 flex items-center gap-1"><Wifi size={12} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={12} /> Offline</span>}
-              <span>| {session?.user?.email || 'local'}</span>
+            <h1 className="text-base font-semibold tracking-tight">Malhotra Güvenlik Paneli</h1>
+            <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+              {isOnline ? <span className="text-emerald-400 flex items-center gap-1"><Wifi size={11} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={11} /> Offline</span>}
+              <span className="text-zinc-500">|</span>
+              <span>{session?.user?.email || 'local'}</span>
               {totalQueueCount > 0 && (
                 <span className="ui-pill">Kuyruk: {totalQueueCount}</span>
               )}
+              <span className="text-zinc-500">|</span>
+              <span className="text-zinc-500">v{BUILD_TIME}</span>
             </div>
-            <div className="text-[10px] text-zinc-500 mt-1 break-all">
-              Supabase: {supabaseUrl}
-              {supabaseDebug.lastError ? ` | Error: ${supabaseDebug.lastError}` : ''}
-              {supabaseDebug.lastCheckedAt ? ` | Check: ${new Date(supabaseDebug.lastCheckedAt).toLocaleTimeString('tr-TR')}` : ''}
-            </div>
-            <div className="text-[10px] text-zinc-500">Build: {BUILD_TIME}</div>
           </div>
         </div>
-        <div className="ui-chip"><Layers size={18} className="text-orange-400" /><div className="flex flex-col"><span className="text-[10px] text-zinc-400 font-bold uppercase">Aktif Vardiya</span><span className="text-white text-sm font-bold">{currentShift}</span></div></div>
-        <div className="flex items-center gap-2">
-          {longStayCount > 0 && <div className="bg-red-600 text-white px-3 py-2 rounded-lg font-bold flex items-center gap-2 animate-pulse hidden md:flex"><AlertCircle size={18} /><span>{longStayCount} kişi 4+ saat!</span></div>}
-          <button onClick={handleSystemReset} className="ui-btn-secondary" title="Takılı kalırsa sistemi yeniler"><RefreshCw size={16} /> Yenile</button>
-          <button onClick={recomputeActiveLogs} className="ui-btn-secondary" title="Aktif listeyi yeniden hesaplar"><RotateCcw size={16} /> Aktifleri Yenile</button>
-          <Button onClick={() => setCurrentPage('dashboard')} variant="secondary" className="gap-2"><BarChart3 size={18} /> Dashboard</Button>
-          <Button onClick={() => setCurrentPage('import')} variant="secondary" className="gap-2"><Upload size={18} /> Veri Yükle</Button>
+        <div className="flex items-center gap-3">
+          <div className="ui-chip">
+            <Layers size={14} className="text-blue-400" />
+            <div className="flex flex-col">
+              <span className="text-[9px] text-zinc-500 font-medium uppercase tracking-wider">Vardiya</span>
+              <span className="text-white text-xs font-semibold">{currentShift}</span>
+            </div>
+          </div>
+          {longStayCount > 0 && <div className="bg-red-600/90 text-white px-2.5 py-1.5 rounded text-xs font-medium flex items-center gap-1.5 hidden md:flex"><AlertCircle size={14} /><span>{longStayCount} kişi 4+ saat</span></div>}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button onClick={handleSystemReset} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Sistemi yenile"><RefreshCw size={14} /></button>
+          <button onClick={recomputeActiveLogs} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Aktifleri yenile"><RotateCcw size={14} /></button>
+          <Button onClick={() => setCurrentPage('dashboard')} variant="secondary" size="sm" className="gap-1.5"><BarChart3 size={14} /> Dashboard</Button>
+          <Button onClick={() => setCurrentPage('import')} variant="secondary" size="sm" className="gap-1.5"><Upload size={14} /> Veri Yükle</Button>
           {isElectron && (
-            <button onClick={handleAppExit} className="ui-btn-destructive"><LogOut size={18} /> Çıkış</button>
+            <button onClick={handleAppExit} className="ui-btn-destructive px-2.5 py-1.5 text-xs gap-1"><LogOut size={14} /> Çıkış</button>
           )}
         </div>
       </header>
 
-      <main className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <main className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* SOL: GİRİŞ/ÇIKIŞ FORMU */}
-        <section className="lg:col-span-5 ui-card p-6 h-fit shadow-lg">
-          <div className="ui-segment mb-4">
-            <button onClick={() => setVehicleDirection('Giriş')} className={cx("ui-segment-btn flex items-center justify-center gap-2 whitespace-nowrap", vehicleDirection === 'Giriş' ? "ui-segment-success" : "ui-segment-inactive")}>
-              <ArrowRightCircle size={18} />
+        <section className="lg:col-span-5 ui-card p-4 h-fit">
+          <div className="ui-segment mb-3">
+            <button onClick={() => setVehicleDirection('Giriş')} className={cx("ui-segment-btn flex items-center justify-center gap-1.5 whitespace-nowrap text-xs", vehicleDirection === 'Giriş' ? "ui-segment-success" : "ui-segment-inactive")}>
+              <ArrowRightCircle size={14} />
               <span className="hidden sm:inline">GİRİŞ İŞLEMİ</span>
               <span className="sm:hidden">GİRİŞ</span>
             </button>
-            <button onClick={() => setVehicleDirection('Çıkış')} className={cx("ui-segment-btn flex items-center justify-center gap-2 whitespace-nowrap", vehicleDirection === 'Çıkış' ? "ui-segment-danger" : "ui-segment-inactive")}>
-              <ArrowLeftCircle size={18} />
+            <button onClick={() => setVehicleDirection('Çıkış')} className={cx("ui-segment-btn flex items-center justify-center gap-1.5 whitespace-nowrap text-xs", vehicleDirection === 'Çıkış' ? "ui-segment-danger" : "ui-segment-inactive")}>
+              <ArrowLeftCircle size={14} />
               <span className="hidden sm:inline">ÇIKIŞ İŞLEMİ</span>
               <span className="sm:hidden">ÇIKIŞ</span>
             </button>
           </div>
 
-          <div className="ui-segment mb-6">
-            <button onClick={() => setMainTab('vehicle')} className={cx("ui-segment-btn", mainTab === 'vehicle' ? "ui-segment-active" : "ui-segment-inactive")}>ARAÇ</button>
-            <button onClick={() => setMainTab('visitor')} className={cx("ui-segment-btn whitespace-nowrap", mainTab === 'visitor' ? "ui-segment-active" : "ui-segment-inactive")}>
+          <div className="ui-segment mb-4">
+            <button onClick={() => { setMainTab('vehicle'); setFormData(prev => ({ ...prev, name: '', tc_no: '', phone: '' })); setShowStaffList(false); setShowHostStaffList(false); }} className={cx("ui-segment-btn text-xs", mainTab === 'vehicle' ? "ui-segment-active" : "ui-segment-inactive")}>ARAÇ</button>
+            <button onClick={() => { setMainTab('visitor'); setFormData(prev => ({ ...prev, plate: '', driver: '', driver_type: 'other', seal_number_entry: '', seal_number_exit: '' })); setShowManagementList(false); }} className={cx("ui-segment-btn whitespace-nowrap text-xs", mainTab === 'visitor' ? "ui-segment-active" : "ui-segment-inactive")}>
               <span className="hidden sm:inline">YAYA / ZİYARETÇİ</span>
               <span className="sm:hidden">YAYA</span>
             </button>
           </div>
 
           {mainTab === 'vehicle' && (
-            <div className="grid grid-cols-3 md:grid-cols-6 gap-1 mb-6">
-              <SubTabBtn active={vehicleSubTab === 'guest'} onClick={() => { setVehicleSubTab('guest'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Car size={14} />} label="Misafir" />
-              <SubTabBtn active={vehicleSubTab === 'staff'} onClick={() => { setVehicleSubTab('staff'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<User size={14} />} label="Personel" />
-              <SubTabBtn active={vehicleSubTab === 'management'} onClick={() => { setVehicleSubTab('management'); setFormData(prev => ({ ...prev, driver_type: 'owner' })); }} icon={<Crown size={14} />} label="Yönetim" />
-              <SubTabBtn active={vehicleSubTab === 'service'} onClick={() => { setVehicleSubTab('service'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Bus size={14} />} label="Servis" />
-              <SubTabBtn active={vehicleSubTab === 'sealed'} onClick={() => { setVehicleSubTab('sealed'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Lock size={14} />} label="Mühürlü" />
-              <SubTabBtn active={vehicleSubTab === 'company'} onClick={() => { setVehicleSubTab('company'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Briefcase size={14} />} label="Şirket" />
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-1 mb-4">
+              <SubTabBtn active={vehicleSubTab === 'guest'} onClick={() => { setVehicleSubTab('guest'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Car size={13} />} label="Misafir" />
+              <SubTabBtn active={vehicleSubTab === 'staff'} onClick={() => { setVehicleSubTab('staff'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<User size={13} />} label="Personel" />
+              <SubTabBtn active={vehicleSubTab === 'management'} onClick={() => { setVehicleSubTab('management'); setFormData(prev => ({ ...prev, driver_type: 'owner' })); }} icon={<Crown size={13} />} label="Yönetim" />
+              <SubTabBtn active={vehicleSubTab === 'service'} onClick={() => { setVehicleSubTab('service'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Bus size={13} />} label="Servis" />
+              <SubTabBtn active={vehicleSubTab === 'sealed'} onClick={() => { setVehicleSubTab('sealed'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Lock size={13} />} label="Mühürlü" />
+              <SubTabBtn active={vehicleSubTab === 'company'} onClick={() => { setVehicleSubTab('company'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Briefcase size={13} />} label="Şirket" />
             </div>
           )}
           {mainTab === 'visitor' && (
@@ -5069,28 +6467,27 @@ const sendDailyReport = useCallback((dateParam) => {
                   <FormField label="ARAÇ PLAKASI">
                   {(vehicleSubTab === 'management' || vehicleSubTab === 'company') ? (
                     <div className="relative">
-                      <Input type="text" placeholder="34 AB 123" value={formData.plate || ''} onChange={(e) => { setFormData({ ...formData, plate: e.target.value.toUpperCase() }); setShowManagementList(true); }} onFocus={() => setShowManagementList(true)} className="uppercase text-lg tracking-widest font-mono border-purple-500/50" autoComplete="off" />
+                      <Input type="text" placeholder="34 AB 123" value={formData.plate || ''} onChange={(e) => { setFormData({ ...formData, plate: e.target.value.toUpperCase() }); setShowManagementList(true); }} onFocus={() => setShowManagementList(true)} onBlur={() => setTimeout(() => setShowManagementList(false), 200)} className="uppercase text-lg tracking-widest font-mono border-purple-500/50" autoComplete="off" />
                       {showManagementList && formData.plate && (
                         <div className="absolute z-50 w-full bg-zinc-800 border border-zinc-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
-                          {managementVehicleMatches.map((veh, idx) => (
+                          {managementVehicleMatches.map((veh) => (
                             <div
-                              key={idx}
+                              key={veh.id || veh.plate}
                               className="p-3 hover:bg-purple-600 hover:text-white cursor-pointer border-b border-zinc-700 last:border-0 text-sm transition-all flex items-center gap-2 font-mono"
                               onClick={() => {
-                                const [platePart, namePart] = veh.split(' - ');
-                                const isCompany = veh.includes('ŞİRKET') || veh.includes('HAVUZ');
+                                
                                 setFormData({
                                   ...formData,
-                                  plate: platePart.trim(),
-                                  driver: namePart ? namePart.trim() : '',
-                                  driver_type: (vehicleSubTab === 'management' && !isCompany) ? 'owner' : 'other',
-                                  host: vehicleSubTab === 'management' ? 'Yönetim' : 'Şirket'
+                                  plate: veh.plate,
+                                  driver: veh.label || '',
+                                  driver_type: veh.default_driver_type || (vehicleSubTab === 'management' ? 'owner' : 'other'),
+                                  host: veh.category === 'company' ? 'Şirket' : 'Yönetim'
                                 });
                                 setShowManagementList(false);
                               }}
                             >
                               <Crown size={14} className="text-yellow-400" />
-                              {veh}
+                              {veh.display_name || [veh.plate, veh.label].filter(Boolean).join(' - ')}
                             </div>
                           ))}
                           {managementVehicleMatches.length === 0 && (
@@ -5108,7 +6505,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   <div className="bg-purple-900/20 p-3 rounded border border-purple-500/30 animate-in fade-in slide-in-from-top-2">
                     <label className="text-xs text-purple-300 flex items-center gap-1 mb-2 font-bold"><User size={12} /> {isExitDirection ? 'ÇIKIŞTA ARACI KULLANAN' : 'ARACI KULLANAN'}</label>
                     <div className="grid grid-cols-2 gap-2 mb-2">
-                      {vehicleSubTab === 'management' && !MANAGEMENT_VEHICLES.some(v => v.includes(formData.plate) && (v.includes('ŞİRKET') || v.includes('HAVUZ'))) && (<button type="button" onClick={() => setFormData({ ...formData, driver_type: 'owner' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'owner' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Araç Sahibi</button>)}
+                      {canUseOwnerDriverType && (<button type="button" onClick={() => setFormData({ ...formData, driver_type: 'owner' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'owner' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Araç Sahibi</button>)}
                       <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'driver', driver: 'MURAT CİK' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'driver' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Fabrika Şoförü</button>
                       <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'supervisor', driver: 'AHMET PEKER' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'supervisor' ? 'bg-orange-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Vardiya Amiri</button>
                       <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'manual', driver: '' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'manual' ? 'bg-green-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Manuel Giriş</button>
@@ -5130,7 +6527,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     <FormField label="SÜRÜCÜ ADI SOYADI">
                     {vehicleSubTab === 'staff' ? (
                       <div className="relative group">
-                        <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.driver || ''} onChange={(e) => { setFormData({ ...formData, driver: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.driver && (<button onClick={() => setFormData({ ...formData, driver: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
+                        <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.driver || ''} onChange={(e) => { setFormData({ ...formData, driver: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} onBlur={() => setTimeout(() => setShowStaffList(false), 200)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.driver && (<button onClick={() => setFormData({ ...formData, driver: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
                         {showStaffList && formData.driver && (
                           <div className="absolute z-50 w-full bg-zinc-800 border border-zinc-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
                             {staffDriverMatches.map((person, idx) => (
@@ -5226,7 +6623,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 <FormField label="ADI SOYADI">
                 {visitorSubTab === 'staff' ? (
                   <div className="relative group">
-                    <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.name || ''} onChange={(e) => { setFormData({ ...formData, name: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.name && (<button onClick={() => setFormData({ ...formData, name: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
+                    <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.name || ''} onChange={(e) => { setFormData({ ...formData, name: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} onBlur={() => setTimeout(() => setShowStaffList(false), 200)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.name && (<button onClick={() => setFormData({ ...formData, name: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
                     {showStaffList && formData.name && (
                       <div className="absolute z-50 w-full bg-zinc-800 border border-zinc-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
                         {staffVisitorMatches.map((person, idx) => (
@@ -5269,6 +6666,35 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
             )}
 
+            {isExitDirection && (
+              <div className="ui-panel">
+                <FormField
+                  label="AKTİF ÇIKIŞ KAYDI"
+                  htmlFor="active-exit-log"
+                  helper={exitCandidates.length > 0 ? 'İsim veya plakayı yeniden yazmadan doğrudan aktif kaydı seçebilirsiniz.' : 'Bu sekme için aktif kayıt bulunmuyor.'}
+                >
+                  <Select
+                    id="active-exit-log"
+                    value={selectedExitLogId}
+                    onChange={(e) => setSelectedExitLogId(e.target.value)}
+                    disabled={exitCandidates.length === 0 || !!actionLoading}
+                  >
+                    <option value="">{exitCandidates.length > 0 ? 'Aktif kaydı seçin (önerilen)' : 'Aktif kayıt yok'}</option>
+                    {exitCandidates.map((log) => (
+                      <option key={getLogBindingId(log) || String(log.id || '')} value={getLogBindingId(log) || String(log.id || '')}>
+                        {buildExitOptionLabel(log)}
+                      </option>
+                    ))}
+                  </Select>
+                </FormField>
+                {selectedExitLog && (
+                  <div className="mt-2 text-xs text-zinc-300 bg-zinc-900/70 border border-zinc-700/70 rounded px-3 py-2">
+                    <span className="text-zinc-400">Seçili kayıt:</span> {buildExitOptionLabel(selectedExitLog)}
+                  </div>
+                )}
+              </div>
+            )}
+
             {isEntryDirection && (
               <div>
                 <label className={labelClass}>İLGİLİ BİRİM / KİŞİ</label>
@@ -5300,7 +6726,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   }}
                 >
                   <option value="">Seçiniz</option>
-                  {HOST_PRESETS.map((opt) => (
+                  {activeHostPresetNames.map((opt) => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
                   <option value="Fabrika Personeli">Fabrika Personeli (Listeden Seç)</option>
@@ -5398,33 +6824,37 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
             )}
 
-            <button onClick={handleEntry} disabled={loading} className={`w-full font-bold py-4 rounded shadow-lg transition-all active:scale-95 mt-2 flex items-center justify-center gap-2 ${vehicleDirection === 'Çıkış' ? 'bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white shadow-orange-900/20' : 'bg-green-600 hover:bg-green-500 text-white shadow-green-900/20'}`}>
-              {loading ? <><RefreshCw size={20} className="animate-spin" /> KAYDEDİLİYOR...</> : vehicleDirection === 'Çıkış' ? <><LogOut size={20} /> ÇIKIŞI KAYDET</> : <><LogIn size={20} /> GİRİŞİ KAYDET</>}
+            <button onClick={handleEntry} disabled={loading || !!actionLoading} className={`w-full font-medium py-3 rounded-md transition-colors mt-3 flex items-center justify-center gap-2 text-sm disabled:opacity-60 disabled:cursor-not-allowed ${vehicleDirection === 'Çıkış' ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}>
+              {loading || actionLoading
+                ? <><RefreshCw size={16} className="animate-spin" /> {vehicleDirection === 'Çıkış' ? 'Çıkış işleniyor...' : 'Kaydediliyor...'}</>
+                : vehicleDirection === 'Çıkış'
+                  ? <><LogOut size={16} /> Çıkışı Kaydet</>
+                  : <><LogIn size={16} /> Girişi Kaydet</>}
             </button>
           </div>
         </section>
 
         {/* SAĞ: BUGÜNKÜ HAREKETLER */}
-        <section className="lg:col-span-7 ui-card p-6 min-h-[500px] shadow-lg flex flex-col">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 pb-4 border-b border-zinc-700 gap-3">
-            <h2 className="text-lg font-bold flex items-center gap-2">Bugünkü Hareketler</h2>
-            <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+        <section className="lg:col-span-7 ui-card p-4 min-h-[500px] flex flex-col">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-3 pb-3 border-b border-zinc-700/40 gap-2">
+            <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Bugünkü Hareketler</h2>
+            <div className="flex items-center gap-1.5 w-full md:w-auto flex-wrap">
               <div className="relative flex-1 md:flex-none">
-                <Search className="absolute left-3 top-2.5 text-zinc-500" size={16} />
+                <Search className="absolute left-2.5 top-2 text-zinc-500" size={14} />
                 <input
                   type="text"
                   placeholder="Ara..."
                   value={activeSearchTerm}
                   onChange={e => setActiveSearchTerm(e.target.value)}
-                  className="bg-zinc-900 border border-zinc-600 rounded pl-9 pr-3 py-2 text-sm text-white outline-none focus:border-orange-500 w-full md:w-48"
+                  className="ui-input pl-8 py-1.5 text-xs w-full md:w-44"
                 />
               </div>
               <button
-                onClick={() => {
+                onClick={async () => {
                   const today = toDateOnly(new Date());
                   const todayData = todayAllLogs.map(log => ({
-                    Tarih: new Date(log.time).toLocaleDateString('tr-TR'),
-                    Saat: new Date(log.time).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+                    Tarih: formatTrDate(log.time),
+                    Saat: formatTrTime(log.time, { hour: '2-digit', minute: '2-digit' }),
                     Durum: log.direction === 'entry' ? 'GİRİŞ' : 'ÇIKIŞ',
                     Kategori: log.sub_category,
                     'Plaka/İsim': log.plate || log.name,
@@ -5432,100 +6862,98 @@ const sendDailyReport = useCallback((dateParam) => {
                     'İlgili Birim': log.host,
                     Vardiya: log.shift
                   }));
+                  const XLSX = await loadXlsx();
                   const ws = XLSX.utils.json_to_sheet(todayData);
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Bugünkü Hareketler');
                   XLSX.writeFile(wb, `Bugunun_Hareketleri_${today}.xlsx`);
                   showToast('Excel dosyası indirildi!', 'success');
                 }}
-                className="bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded text-sm font-bold flex items-center gap-1 transition-all"
-                title="Bugünkü Hareketleri Excel'e Aktar"
+                className="ui-btn-secondary px-2.5 py-1.5 text-xs gap-1"
+                title="Excel'e Aktar"
               >
-                <FileText size={16} /> Excel
+                <FileText size={13} /> Excel
               </button>
-              <span className="bg-blue-500/20 text-blue-300 px-3 py-2 rounded text-sm font-bold whitespace-nowrap">
-                {todayCounts.total} Kayıt
+              <span className="text-[11px] text-zinc-400 font-medium px-2 py-1 bg-zinc-800/60 rounded border border-zinc-700/40 whitespace-nowrap">
+                {todayCounts.total} kayıt
               </span>
             </div>
           </div>
 
           {/* DETAYLI İSTATİSTİK KARTLARI */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <div onClick={() => handleCardClick('entry')} className="bg-green-900/30 border border-green-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-green-300 flex items-center gap-1 font-bold">
-                  <ArrowRightCircle size={16} /> Giriş
-                </span>
-                <span className="text-3xl font-bold text-green-400 group-hover:scale-110 transition-transform">
-                  {todayCounts.entry}
-                </span>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+            <div onClick={() => handleCardClick('entry')} className="ui-kpi cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-emerald-500">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Giriş</div>
+                  <div className="text-2xl font-semibold text-emerald-400 mt-0.5">{todayCounts.entry}</div>
+                </div>
+                <ArrowRightCircle size={18} className="text-emerald-500/40" />
               </div>
-              <div className="text-[10px] text-green-300/60">Bugün Toplam</div>
             </div>
 
-            <div onClick={() => handleCardClick('exit')} className="bg-red-900/30 border border-red-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-red-300 flex items-center gap-1 font-bold">
-                  <ArrowLeftCircle size={16} /> Çıkış
-                </span>
-                <span className="text-3xl font-bold text-red-400 group-hover:scale-110 transition-transform">
-                  {todayCounts.exit}
-                </span>
+            <div onClick={() => handleCardClick('exit')} className="ui-kpi cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-red-500">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Çıkış</div>
+                  <div className="text-2xl font-semibold text-red-400 mt-0.5">{todayCounts.exit}</div>
+                </div>
+                <ArrowLeftCircle size={18} className="text-red-500/40" />
               </div>
-              <div className="text-[10px] text-red-300/60">Bugün Toplam</div>
             </div>
 
-            <div onClick={() => handleCardClick('inside')} className="bg-orange-900/30 border border-orange-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-orange-300 flex items-center gap-1 font-bold">
-                  <Activity size={16} /> İçeride
-                </span>
-                <span className="text-3xl font-bold text-orange-400 group-hover:scale-110 transition-transform animate-pulse">{activeLogs.length}</span>
+            <div onClick={() => handleCardClick('inside')} className="ui-kpi cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-blue-500">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">İçeride</div>
+                  <div className="text-2xl font-semibold text-blue-400 mt-0.5">{activeLogs.length}</div>
+                </div>
+                <Activity size={18} className="text-blue-500/40" />
               </div>
-              <div className="text-[10px] text-orange-300/60">Şu Anda Aktif</div>
             </div>
 
-            <div onClick={() => handleCardClick('avgDuration')} className="bg-purple-900/30 border border-purple-500/30 p-4 rounded-lg hover:scale-105 transition-transform cursor-pointer group">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-purple-300 flex items-center gap-1 font-bold">
-                  <Timer size={16} /> Ort. Süre
-                </span>
-                <span className="text-2xl font-bold text-purple-400 group-hover:scale-110 transition-transform">
-                  {todayDetailedStats.avgWaitMinutes > 0
-                    ? `${Math.floor(todayDetailedStats.avgWaitMinutes / 60)}s ${todayDetailedStats.avgWaitMinutes % 60}dk`
-                    : '-'
-                  }
-                </span>
+            <div onClick={() => handleCardClick('avgDuration')} className="ui-kpi cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-zinc-500">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Ort. Süre</div>
+                  <div className="text-xl font-semibold text-zinc-200 mt-0.5">
+                    {todayDetailedStats.avgWaitMinutes > 0
+                      ? `${Math.floor(todayDetailedStats.avgWaitMinutes / 60)}s ${todayDetailedStats.avgWaitMinutes % 60}dk`
+                      : '-'
+                    }
+                  </div>
+                </div>
+                <Timer size={18} className="text-zinc-500/40" />
               </div>
-              <div className="text-[10px] text-purple-300/60">
-                {todayDetailedStats.completedCount} tamamlanan ziyaret
+              <div className="text-[10px] text-zinc-500 mt-1">
+                {todayDetailedStats.completedCount} tamamlanan
               </div>
             </div>
           </div>
 
           {/* VARDİYA BAZLI GÖRSEL GRAFİK */}
-          <div className="bg-zinc-900/50 p-4 rounded-lg mb-4 border border-zinc-700">
-            <div className="flex items-center gap-2 mb-3">
-              <CalendarClock className="text-blue-400" size={18} />
-              <h3 className="text-sm font-bold text-blue-300">Vardiya Dağılımı (Girişler)</h3>
+          <div className="ui-panel mb-3">
+            <div className="flex items-center gap-2 mb-2.5">
+              <CalendarClock className="text-blue-400" size={14} />
+              <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Vardiya Dağılımı</h3>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               {Object.entries(todayDetailedStats.shiftBreakdown).map(([shift, count]) => {
                 const total = Object.values(todayDetailedStats.shiftBreakdown).reduce((a, b) => a + b, 0);
                 const percentage = total > 0 ? Math.round((count / total) * 100) : 0;
                 const isActiveShift = shift === currentShift;
 
                 return (
-                  <div key={shift} className={`p-3 rounded-lg transition-all ${isActiveShift ? 'bg-blue-600/30 border-2 border-blue-500 scale-105' : 'bg-zinc-800 border border-zinc-700'}`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-zinc-300">{shift.split(' ')[0]}</span>
-                      {isActiveShift && <span className="bg-blue-500 text-white text-[9px] px-2 py-0.5 rounded font-bold animate-pulse">AKTİF</span>}
+                  <div key={shift} className={`p-2.5 rounded transition-colors ${isActiveShift ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-zinc-800/60 border border-zinc-700/40'}`}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[11px] font-medium text-zinc-400">{shift.split(' ')[0]}</span>
+                      {isActiveShift && <span className="bg-blue-500/100 text-white text-[8px] px-1.5 py-0.5 rounded font-medium">AKTİF</span>}
                     </div>
-                    <div className="text-2xl font-bold text-white mb-1">{count}</div>
-                    <div className="w-full bg-zinc-700 rounded-full h-2 mb-1">
-                      <div className={`h-2 rounded-full transition-all duration-500 ${isActiveShift ? 'bg-blue-500' : 'bg-zinc-500'}`} style={{ width: `${percentage}%` }}></div>
+                    <div className="text-lg font-semibold text-white mb-1">{count}</div>
+                    <div className="w-full bg-zinc-700/50 rounded h-1 mb-1">
+                      <div className={`h-1 rounded transition-all ${isActiveShift ? 'bg-blue-500' : 'bg-zinc-500'}`} style={{ width: `${percentage}%` }}></div>
                     </div>
-                    <div className="text-[10px] text-zinc-400">{percentage}% / {shift.match(/\(([^)]+)\)/)[1]}</div>
+                    <div className="text-[10px] text-zinc-500">{percentage}% — {shift.match(/\(([^)]+)\)/)[1]}</div>
                   </div>
                 );
               })}
@@ -5534,12 +6962,12 @@ const sendDailyReport = useCallback((dateParam) => {
 
           {/* KATEGORİ BAZLI İSTATİSTİKLER */}
           {Object.keys(todayDetailedStats.categoryBreakdown).length > 0 && (
-            <div className="bg-zinc-900/50 p-4 rounded-lg mb-4 border border-zinc-700">
-              <div className="flex items-center gap-2 mb-3">
-                <PieChart className="text-green-400" size={18} />
-                <h3 className="text-sm font-bold text-green-300">Kategori Dağılımı (Girişler)</h3>
+            <div className="ui-panel mb-3">
+              <div className="flex items-center gap-2 mb-2.5">
+                <PieChart className="text-emerald-400" size={14} />
+                <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Kategori Dağılımı</h3>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
                 {Object.entries(todayDetailedStats.categoryBreakdown)
                   .sort(([, a], [, b]) => b - a)
                   .map(([category, count]) => {
@@ -5547,14 +6975,14 @@ const sendDailyReport = useCallback((dateParam) => {
                     const percentage = Math.round((count / total) * 100);
 
                     return (
-                      <div key={category} className="bg-zinc-800 p-2 rounded border border-zinc-700 hover:border-zinc-500 transition-colors group">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${getCategoryStyle(category)}`}>
+                      <div key={category} className="bg-zinc-800/50 px-2.5 py-2 rounded border border-zinc-700/40 hover:border-zinc-600/60 transition-colors">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${getCategoryStyle(category)}`}>
                             {category.replace(' Aracı', '').replace('Fabrika Personeli', 'Personel')}
                           </span>
-                          <span className="text-lg font-bold text-white group-hover:scale-110 transition-transform">{count}</span>
+                          <span className="text-base font-semibold text-white">{count}</span>
                         </div>
-                        <div className="text-[9px] text-zinc-400">%{percentage}</div>
+                        <div className="text-[9px] text-zinc-500">%{percentage}</div>
                       </div>
                     );
                   })}
@@ -5562,78 +6990,78 @@ const sendDailyReport = useCallback((dateParam) => {
             </div>
           )}
 
-          {/* SON 1 SAAT İSTATİSTİĞİ - GELİŞTİRİLMİŞ */}
+          {/* SON 1 SAAT İSTATİSTİĞİ */}
           {todayDetailedStats.recentCount > 0 && (
-            <div className="bg-gradient-to-r from-blue-900/30 to-cyan-900/30 border border-blue-500/50 p-4 rounded-lg mb-4 shadow-lg">
-              <div className="flex items-center justify-between mb-3">
+            <div className="ui-panel border-l-2 border-l-blue-500 mb-3">
+              <div className="flex items-center justify-between mb-2.5">
                 <div className="flex items-center gap-2">
-                  <Clock className="text-blue-400 animate-pulse" size={20} />
-                  <span className="text-base font-bold text-blue-200">Son 1 Saatteki Hareketlilik</span>
+                  <Clock className="text-blue-400" size={14} />
+                  <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Son 1 Saat</span>
                 </div>
-                <span className="bg-blue-500 text-white text-xs px-3 py-1 rounded-full font-bold animate-pulse">
+                <span className="bg-blue-500/15 text-blue-400 text-[10px] px-2 py-0.5 rounded font-medium border border-blue-500/20">
                   CANLI
                 </span>
               </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-green-900/30 p-3 rounded-lg border border-green-500/30">
-                  <div className="flex items-center gap-2 mb-1">
-                    <ArrowRightCircle className="text-green-400" size={16} />
-                    <span className="text-xs text-green-300 font-bold">Giriş</span>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-emerald-500/10 px-2.5 py-2 rounded border border-emerald-500/20">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <ArrowRightCircle className="text-emerald-400" size={12} />
+                    <span className="text-[10px] text-emerald-300 font-medium">Giriş</span>
                   </div>
-                  <div className="text-2xl font-bold text-green-400">{todayDetailedStats.recentEntries}</div>
+                  <div className="text-lg font-semibold text-emerald-400">{todayDetailedStats.recentEntries}</div>
                 </div>
-                <div className="bg-red-900/30 p-3 rounded-lg border border-red-500/30">
-                  <div className="flex items-center gap-2 mb-1">
-                    <ArrowLeftCircle className="text-red-400" size={16} />
-                    <span className="text-xs text-red-300 font-bold">Çıkış</span>
+                <div className="bg-red-500/10 px-2.5 py-2 rounded border border-red-500/20">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <ArrowLeftCircle className="text-red-400" size={12} />
+                    <span className="text-[10px] text-red-300 font-medium">Çıkış</span>
                   </div>
-                  <div className="text-2xl font-bold text-red-400">{todayDetailedStats.recentExits}</div>
+                  <div className="text-lg font-semibold text-red-400">{todayDetailedStats.recentExits}</div>
                 </div>
-                <div className="bg-blue-900/30 p-3 rounded-lg border border-blue-500/30">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Activity className="text-blue-400" size={16} />
-                    <span className="text-xs text-blue-300 font-bold">Toplam</span>
+                <div className="bg-blue-500/10 px-2.5 py-2 rounded border border-blue-500/20">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <Activity className="text-blue-400" size={12} />
+                    <span className="text-[10px] text-blue-300 font-medium">Toplam</span>
                   </div>
-                  <div className="text-2xl font-bold text-blue-400">{todayDetailedStats.recentCount}</div>
+                  <div className="text-lg font-semibold text-blue-400">{todayDetailedStats.recentCount}</div>
                 </div>
               </div>
             </div>
           )}
 
           {/* FİLTRELEME VE AYARLAR */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4 pb-3 border-b border-zinc-700">
-            <div className="flex gap-2 flex-wrap">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 mb-3 pb-2.5 border-b border-zinc-700/30">
+            <div className="flex gap-1 flex-wrap">
               <Button
                 onClick={() => { setTodayPageFilter('all'); setTodayCurrentPage(1); }}
-                variant={todayPageFilter === 'all' ? 'primary' : 'secondary'}
+                variant={todayPageFilter === 'all' ? 'primary' : 'ghost'}
                 size="sm"
-                className={todayPageFilter === 'all' ? 'scale-[1.02]' : ''}
+                className="text-xs"
               >
                 Tümü ({todayCounts.total})
               </Button>
               <Button
                 onClick={() => { setTodayPageFilter('entry'); setTodayCurrentPage(1); }}
-                variant={todayPageFilter === 'entry' ? 'primary' : 'secondary'}
+                variant={todayPageFilter === 'entry' ? 'primary' : 'ghost'}
                 size="sm"
-                className={cx('gap-1', todayPageFilter === 'entry' ? 'scale-[1.02]' : '')}
+                className="gap-1 text-xs"
               >
-                <ArrowRightCircle size={14} /> Girişler ({todayCounts.entry})
+                <ArrowRightCircle size={12} /> Girişler ({todayCounts.entry})
               </Button>
               <Button
                 onClick={() => { setTodayPageFilter('exit'); setTodayCurrentPage(1); }}
-                variant={todayPageFilter === 'exit' ? 'primary' : 'secondary'}
+                variant={todayPageFilter === 'exit' ? 'primary' : 'ghost'}
                 size="sm"
-                className={cx('gap-1', todayPageFilter === 'exit' ? 'scale-[1.02]' : '')}
+                className="gap-1 text-xs"
               >
-                <ArrowLeftCircle size={14} /> Çıkışlar ({todayCounts.exit})
+                <ArrowLeftCircle size={12} /> Çıkışlar ({todayCounts.exit})
               </Button>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <Select
                 value={todayCategoryFilter}
                 onChange={(e) => { setTodayCategoryFilter(e.target.value); setTodayCurrentPage(1); }}
-                className="w-auto text-xs font-bold py-2"
+                className="w-auto text-xs py-1.5"
               >
                 <option value="">Tüm Kategoriler</option>
                 {Object.entries(todayDetailedStats.categoryBreakdown)
@@ -5645,22 +7073,16 @@ const sendDailyReport = useCallback((dateParam) => {
                   ))}
               </Select>
 
-              <Select
-                value={todayPageSize}
-                onChange={() => {}}
-                className="w-auto text-xs font-bold py-2"
-                disabled
-                title="Sayfa başına gösterim ayarı (15 kayıt sabit)"
-              >
-                <option value={15}>15 kayıt/sayfa</option>
-              </Select>
+              <span className="text-[10px] text-zinc-500 font-medium px-2 py-1.5 bg-black/20 rounded border border-zinc-700/30 tabular-nums whitespace-nowrap">
+                {todayPageSize}/sayfa
+              </span>
             </div>
           </div>
 
           {/* TABLO */}
           <div className="flex-1 ui-table-wrap">
             <table className="ui-table">
-              <thead className="bg-gradient-to-r from-zinc-900 to-zinc-800 text-zinc-200 sticky top-0 shadow-lg">
+              <thead>
                 <tr>
                   <TableHeadCell
                     icon={<Clock size={14} className="text-blue-400" />}
@@ -5722,64 +7144,64 @@ const sendDailyReport = useCallback((dateParam) => {
                         return (
                           <tr
                             key={`${log.id}-${log.direction}`}
-                            className={`hover:bg-zinc-700/50 transition-all ${isEntry ? 'bg-green-900/5' : 'bg-red-900/5'} ${isRecent ? 'border-l-4 border-l-blue-500 bg-blue-900/10 animate-in fade-in slide-in-from-left-2' : ''}`}
+                            className={`hover:bg-zinc-800/40 transition-colors ${isRecent ? 'border-l-2 border-l-blue-500/60' : ''}`}
                           >
-                            <td className="p-3">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-sm font-bold">
-                                  {new Date(log.time).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono text-sm text-zinc-200">
+                                  {formatTrTime(log.time, { hour: '2-digit', minute: '2-digit' })}
                                 </span>
                                 {isRecent && (
-                                  <span className="bg-blue-500 text-white px-2 py-0.5 rounded text-[9px] font-bold animate-pulse shadow-lg">
-                                    SON 1 SAAT
+                                  <span className="bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded text-[8px] font-medium border border-blue-500/20">
+                                    YENİ
                                   </span>
                                 )}
                               </div>
                             </td>
-                            <td className="p-3">
+                            <td className="px-3 py-2">
                               {isEntry ? (
-                                <span className="bg-green-500/20 text-green-400 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 w-fit">
-                                  <ArrowRightCircle size={12} /> GİRİŞ
+                                <span className="bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded text-[11px] font-medium inline-flex items-center gap-1">
+                                  <ArrowRightCircle size={11} /> GİRİŞ
                                 </span>
                               ) : (
-                                <span className="bg-red-500/20 text-red-400 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 w-fit">
-                                  <ArrowLeftCircle size={12} /> ÇIKIŞ
+                                <span className="bg-red-500/10 text-red-400 px-2 py-0.5 rounded text-[11px] font-medium inline-flex items-center gap-1">
+                                  <ArrowLeftCircle size={11} /> ÇIKIŞ
                                 </span>
                               )}
                             </td>
-                            <td className="p-3">
-                              <span className={`text-[10px] font-bold px-2 py-1 rounded border uppercase ${getCategoryStyle(log.sub_category)}`}>
+                            <td className="px-3 py-2">
+                              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${getCategoryStyle(log.sub_category)}`}>
                                 {getShortCategory(log.sub_category)}
                               </span>
                             </td>
-                            <td className="p-3 font-bold text-white">
-                              <div>{identifier}</div>
-                              {log.driver && <div className="text-xs text-zinc-400 font-normal">{log.driver}</div>}
+                            <td className="px-3 py-2 text-zinc-200 text-sm">
+                              <div className="font-medium">{identifier}</div>
+                              {log.driver && <div className="text-[11px] text-zinc-500 font-normal">{log.driver}</div>}
                               {isAmbiguousInside && (
-                                <div className="text-[10px] text-yellow-300 font-bold mt-1">BELİRSİZ DURUM</div>
+                                <div className="text-[10px] text-amber-400 font-medium mt-0.5">BELİRSİZ DURUM</div>
                               )}
                             </td>
-                            <td className="p-3 text-right">
+                            <td className="px-3 py-2 text-right">
                               <div className="flex justify-end gap-1">
                                 {isEntry && isCurrentlyInside && (
                                   <button
                                     onClick={() => handleQuickExit(log)}
                                     disabled={actionLoading === log.id}
-                                    className="px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-50"
+                                    className="px-2 py-1 rounded bg-red-600/90 hover:bg-red-500 text-white text-[11px] font-medium transition-colors flex items-center gap-1 disabled:opacity-50"
                                     title="Çıkış Yap"
                                   >
-                                    {actionLoading === log.id ? <RefreshCw size={12} className="animate-spin" /> : <LogOut size={12} />}
-                                    Çıkış Yap
+                                    {actionLoading === log.id ? <RefreshCw size={11} className="animate-spin" /> : <LogOut size={11} />}
+                                    Çıkış
                                   </button>
                                 )}
                                 {isEntry && isAmbiguousInside && (
                                   <button
                                     onClick={() => confirmAmbiguousExit(log)}
                                     disabled={actionLoading === log.id}
-                                    className="px-3 py-1.5 rounded bg-yellow-600/80 hover:bg-yellow-500 text-white text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-50"
+                                    className="px-2 py-1 rounded bg-amber-600/80 hover:bg-amber-500 text-white text-[11px] font-medium transition-colors flex items-center gap-1 disabled:opacity-50"
                                     title="Belirsiz durum: zorla çıkış"
                                   >
-                                    <AlertTriangle size={12} />
+                                    <AlertTriangle size={11} />
                                     Zorla Çıkış
                                   </button>
                                 )}
@@ -5787,10 +7209,10 @@ const sendDailyReport = useCallback((dateParam) => {
                                   <button
                                     onClick={() => handleReEntry(log)}
                                     disabled={actionLoading === log.id || loading}
-                                    className="px-3 py-1.5 rounded bg-green-600 hover:bg-green-500 text-white text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-50"
+                                    className="px-2 py-1 rounded bg-emerald-600/90 hover:bg-emerald-500 text-white text-[11px] font-medium transition-colors flex items-center gap-1 disabled:opacity-50"
                                     title="Tekrar Giriş Yap"
                                   >
-                                    {actionLoading === log.id ? <RefreshCw size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+                                    {actionLoading === log.id ? <RefreshCw size={11} className="animate-spin" /> : <RotateCcw size={11} />}
                                     Tekrar Giriş
                                   </button>
                                 )}
@@ -5855,23 +7277,23 @@ const sendDailyReport = useCallback((dateParam) => {
                           </td>
                         </tr>
                       )}
-                      {/* SAYFALAMA - GELİŞTİRİLMİŞ */}
+                      {/* SAYFALAMA */}
                       {totalPages > 1 && (
                         <tr>
                           <td colSpan={5} className="p-0">
-                            <div className="bg-gradient-to-r from-zinc-900 to-zinc-800 p-4 border-t border-zinc-700">
-                              <div className="flex flex-col md:flex-row items-center justify-between gap-3">
+                            <div className="px-3 py-2.5 border-t border-zinc-700/30 bg-card/40">
+                              <div className="flex flex-col md:flex-row items-center justify-between gap-2">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-xs text-zinc-400 bg-zinc-800 px-3 py-1.5 rounded-lg border border-zinc-700">
-                                    {totalRows} kayıttan <span className="font-bold text-blue-400">{startIndex + 1}-{Math.min(endIndex, totalRows)}</span> arası
+                                  <span className="text-[11px] text-zinc-500">
+                                    {totalRows} kayıttan <span className="text-zinc-300">{startIndex + 1}-{Math.min(endIndex, totalRows)}</span>
                                   </span>
                                 </div>
 
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1">
                                   <button
                                     onClick={() => setTodayCurrentPage(1)}
                                     disabled={todayCurrentPage === 1}
-                                    className="px-3 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                    className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                                     title="İlk Sayfa"
                                   >
                                     İlk
@@ -5879,12 +7301,12 @@ const sendDailyReport = useCallback((dateParam) => {
                                   <button
                                     onClick={() => setTodayCurrentPage(prev => Math.max(1, prev - 1))}
                                     disabled={todayCurrentPage === 1}
-                                    className="px-4 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                                    className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                                   >
                                     Önceki
                                   </button>
 
-                                  <div className="flex items-center gap-1">
+                                  <div className="flex items-center gap-0.5">
                                     {[...Array(Math.min(5, totalPages))].map((_, idx) => {
                                       let pageNum;
                                       if (totalPages <= 5) {
@@ -5901,9 +7323,9 @@ const sendDailyReport = useCallback((dateParam) => {
                                         <button
                                           key={pageNum}
                                           onClick={() => setTodayCurrentPage(pageNum)}
-                                          className={`px-3 py-2 rounded-lg text-xs font-bold transition-all ${todayCurrentPage === pageNum
-                                            ? 'bg-blue-600 text-white scale-110 shadow-lg'
-                                            : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                                          className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${todayCurrentPage === pageNum
+                                            ? 'bg-primary text-white'
+                                            : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
                                             }`}
                                         >
                                           {pageNum}
@@ -5912,10 +7334,10 @@ const sendDailyReport = useCallback((dateParam) => {
                                     })}
                                     {totalPages > 5 && todayCurrentPage < totalPages - 2 && (
                                       <>
-                                        <span className="text-zinc-500 px-2">...</span>
+                                        <span className="text-zinc-600 px-1">...</span>
                                         <button
                                           onClick={() => setTodayCurrentPage(totalPages)}
-                                          className="px-3 py-2 rounded-lg bg-zinc-700 text-zinc-300 hover:bg-zinc-600 text-xs font-bold transition-all"
+                                          className="px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 text-[11px] font-medium transition-colors"
                                         >
                                           {totalPages}
                                         </button>
@@ -5926,22 +7348,22 @@ const sendDailyReport = useCallback((dateParam) => {
                                   <button
                                     onClick={() => setTodayCurrentPage(prev => Math.min(totalPages, prev + 1))}
                                     disabled={todayCurrentPage === totalPages}
-                                    className="px-4 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                                    className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                                   >
                                     Sonraki
                                   </button>
                                   <button
                                     onClick={() => setTodayCurrentPage(totalPages)}
                                     disabled={todayCurrentPage === totalPages}
-                                    className="px-3 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                    className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-medium disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                                     title="Son Sayfa"
                                   >
                                     Son
                                   </button>
                                 </div>
 
-                                <div className="text-xs text-zinc-400 bg-zinc-800 px-3 py-1.5 rounded-lg border border-zinc-700">
-                                  Sayfa <span className="font-bold text-blue-400">{todayCurrentPage}</span> / {totalPages}
+                                <div className="text-[11px] text-zinc-500">
+                                  Sayfa <span className="text-zinc-300">{todayCurrentPage}</span> / {totalPages}
                                 </div>
                               </div>
                             </div>
@@ -5957,38 +7379,38 @@ const sendDailyReport = useCallback((dateParam) => {
         </section>
 
         {/* ALT: RAPOR */}
-        <section className="lg:col-span-12 ui-card p-6 shadow-lg mt-2">
-          <div className="flex flex-col gap-4 mb-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <h2 className="text-lg font-bold flex items-center gap-2"><FileText className="text-blue-400" /> Kayıt Geçmişi & Rapor</h2>
-              <div className="flex items-center gap-2">
-                <Button onClick={() => setShowHistoryPanel((prev) => !prev)} variant="secondary" className="gap-2">
-                  {showHistoryPanel ? 'Geçmişi Gizle' : 'Geçmişi Göster'}
+        <section className="lg:col-span-12 ui-card p-4 mt-2">
+          <div className="flex flex-col gap-3 mb-4">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+              <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-2"><FileText className="text-blue-400" size={16} /> Kayıt Geçmişi</h2>
+              <div className="flex items-center gap-1.5">
+                <Button onClick={() => setShowHistoryPanel((prev) => !prev)} variant="ghost" size="sm" className="gap-1.5 text-xs">
+                  {showHistoryPanel ? 'Gizle' : 'Göster'}
                 </Button>
-                <Button onClick={exportToExcel} variant="secondary" className="gap-2">
-                  Excel <CheckCircle size={14} />
+                <Button onClick={exportToExcel} variant="secondary" size="sm" className="gap-1.5 text-xs">
+                  <FileText size={13} /> Excel
                 </Button>
               </div>
             </div>
             {showHistoryPanel ? (
               <>
             {advancedReportEnabled && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                 <div className="ui-panel">
-                  <div className="text-xs text-zinc-400">Toplam (Filtreli)</div>
-                  <div className="text-2xl font-bold">{advancedReport.total}</div>
+                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Toplam</div>
+                  <div className="text-xl font-semibold mt-0.5">{advancedReport.total}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-zinc-400">Iceride</div>
-                  <div className="text-2xl font-bold text-green-300">{advancedReport.insideCount}</div>
+                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider">İçeride</div>
+                  <div className="text-xl font-semibold text-emerald-400 mt-0.5">{advancedReport.insideCount}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-zinc-400">Cikis Yapan</div>
-                  <div className="text-2xl font-bold text-zinc-200">{advancedReport.exitedCount}</div>
+                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Çıkış Yapan</div>
+                  <div className="text-xl font-semibold text-zinc-200 mt-0.5">{advancedReport.exitedCount}</div>
                 </div>
                 <div className="ui-panel">
-                  <div className="text-xs text-zinc-400">Ort. Kalis</div>
-                  <div className="text-2xl font-bold text-blue-300">{advancedReport.avgStayMins} dk</div>
+                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Ort. Kalış</div>
+                  <div className="text-xl font-semibold text-blue-400 mt-0.5">{advancedReport.avgStayMins} dk</div>
                 </div>
                 <div className="ui-panel md:col-span-2">
                   <div className="text-xs text-zinc-400 mb-2">Top Birimler</div>
@@ -6019,17 +7441,17 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
               </div>
             )}
-            <div className="ui-panel flex flex-wrap gap-3">
-              <div className="flex items-center gap-2"><Filter size={16} className="text-zinc-400" /><span className="text-xs text-zinc-400 font-bold">FİLTRELE:</span></div>
+            <div className="ui-panel flex flex-wrap gap-2 items-center">
+              <div className="flex items-center gap-1.5"><Filter size={13} className="text-zinc-500" /><span className="text-[11px] text-zinc-500 font-medium uppercase tracking-wider">Filtre:</span></div>
               <div className="relative flex-1 min-w-[180px] sm:min-w-[200px]">
-                <Search className="absolute left-3 top-2.5 text-zinc-500" size={16} />
-                <Input type="text" placeholder="Plaka, İsim, TC, Telefon, Sürücü ara..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9 pr-3" />
+                <Search className="absolute left-2.5 top-2 text-zinc-500" size={14} />
+                <Input type="text" placeholder="Plaka, İsim, TC, Telefon ara..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-8 py-1.5 text-xs" />
               </div>
-              <div className="flex items-center gap-2">
-                <Calendar size={16} className="text-zinc-400" />
-                <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-auto" />
-                <span className="text-zinc-500">-</span>
-                <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-auto" />
+              <div className="flex items-center gap-1.5">
+                <Calendar size={13} className="text-zinc-500" />
+                <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-auto py-1.5 text-xs" />
+                <span className="text-zinc-600 text-xs">-</span>
+                <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-auto py-1.5 text-xs" />
               </div>
               <Select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="w-auto min-w-[150px]">{CATEGORIES.map(cat => (<option key={cat.value} value={cat.value}>{cat.label}</option>))}</Select>
               <Button onClick={() => setShowAdvancedFilters(prev => !prev)} variant="secondary" size="sm" className="gap-1">
@@ -6154,15 +7576,15 @@ const sendDailyReport = useCallback((dateParam) => {
 
                   return (
                     <tr key={log.id} className={`hover:bg-zinc-700/30 ${isInside ? 'bg-green-900/10' : ''}`}>
-                      <td className="p-3 text-xs">{new Date(log.created_at).toLocaleDateString('tr-TR')}</td>
+                      <td className="p-3 text-xs">{formatTrDate(log.created_at)}</td>
                       <td className="p-3 text-xs font-mono text-orange-300">{log.shift?.split(' ')[0]}</td>
                       <td className="p-3 text-xs"><span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${getCategoryStyle(log.sub_category)}`}>{log.sub_category?.replace(' Aracı', '')}</span></td>
                       <td className="p-3 font-bold text-white">{identifier}</td>
                       <td className="p-3 text-xs text-zinc-300">{log.driver || '-'}</td>
                       <td className="p-3 text-xs"><div>{log.host}</div>{formatLogLocation(log) && <div className="text-blue-400">Lokasyon: {formatLogLocation(log)}</div>}</td>
                       <td className="p-3 text-xs text-zinc-400 max-w-[150px] truncate" title={log.note}>{log.note || '-'}</td>
-                      <td className="p-3 font-mono text-xs text-green-400">{new Date(log.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</td>
-                      <td className="p-3 font-mono text-xs text-red-400">{log.exit_at ? new Date(log.exit_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                      <td className="p-3 font-mono text-xs text-green-400">{formatTrTime(log.created_at, { hour: '2-digit', minute: '2-digit' })}</td>
+                      <td className="p-3 font-mono text-xs text-red-400">{log.exit_at ? formatTrTime(log.exit_at, { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                       {optionalAttachmentsEnabled && (
                         <td className="p-3 text-xs">
                           {attachmentCount > 0 ? (
@@ -6265,9 +7687,129 @@ const sendDailyReport = useCallback((dateParam) => {
         onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
       />
 
+      {editingPerson && (
+        <Modal isOpen={!!editingPerson} onClose={() => setEditingPerson(null)} title={<span className="flex gap-2 items-center"><Edit className="text-blue-500" /> Personeli Düzenle</span>} size="md">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <FormField label="Ad Soyad">
+              <Input value={personEditDraft.full_name} onChange={(e) => setPersonEditDraft({ ...personEditDraft, full_name: e.target.value })} />
+            </FormField>
+            <FormField label="Tip">
+              <Select value={personEditDraft.kind} onChange={(e) => setPersonEditDraft({ ...personEditDraft, kind: e.target.value })}>
+                <option value="employee">Personel</option>
+                <option value="visitor">Ziyaretci</option>
+              </Select>
+            </FormField>
+            <FormField label="TC No">
+              <Input value={personEditDraft.tc_no} onChange={(e) => setPersonEditDraft({ ...personEditDraft, tc_no: e.target.value })} />
+            </FormField>
+            <FormField label="Telefon">
+              <Input value={personEditDraft.phone} onChange={(e) => setPersonEditDraft({ ...personEditDraft, phone: e.target.value })} />
+            </FormField>
+            <label className="flex items-center gap-2 text-sm text-zinc-300">
+              <input type="checkbox" className="ui-checkbox" checked={personEditDraft.is_active} onChange={(e) => setPersonEditDraft({ ...personEditDraft, is_active: e.target.checked })} />
+              Aktif
+            </label>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <Button onClick={() => setEditingPerson(null)} variant="secondary" className="flex-1">İptal</Button>
+            <Button onClick={updatePerson} variant="primary" className="flex-1" disabled={hrLoading}>Kaydet</Button>
+          </div>
+        </Modal>
+      )}
+
+      {editingBadge && (
+        <Modal isOpen={!!editingBadge} onClose={() => setEditingBadge(null)} title={<span className="flex gap-2 items-center"><Edit className="text-blue-500" /> Badge Düzenle</span>} size="md">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <FormField label="Personel">
+              <Select value={badgeEditDraft.person} onChange={(e) => setBadgeEditDraft({ ...badgeEditDraft, person: e.target.value })}>
+                <option value="">Seçin</option>
+                {people.map((person) => (
+                  <option key={person.id} value={person.id}>{person.full_name}</option>
+                ))}
+              </Select>
+            </FormField>
+            <FormField label="Tip">
+              <Select value={badgeEditDraft.kind} onChange={(e) => setBadgeEditDraft({ ...badgeEditDraft, kind: e.target.value })}>
+                <option value="card">Kart</option>
+                <option value="qr">QR</option>
+                <option value="barcode">Barkod</option>
+              </Select>
+            </FormField>
+            <FormField label="Kod">
+              <Input value={badgeEditDraft.code} onChange={(e) => setBadgeEditDraft({ ...badgeEditDraft, code: e.target.value.toUpperCase() })} />
+            </FormField>
+            <label className="flex items-center gap-2 text-sm text-zinc-300">
+              <input type="checkbox" className="ui-checkbox" checked={badgeEditDraft.is_active} onChange={(e) => setBadgeEditDraft({ ...badgeEditDraft, is_active: e.target.checked })} />
+              Aktif
+            </label>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <Button onClick={() => setEditingBadge(null)} variant="secondary" className="flex-1">İptal</Button>
+            <Button onClick={updateBadge} variant="primary" className="flex-1" disabled={hrLoading}>Kaydet</Button>
+          </div>
+        </Modal>
+      )}
+
+      {editingHostPreset && (
+        <Modal isOpen={!!editingHostPreset} onClose={() => setEditingHostPreset(null)} title={<span className="flex gap-2 items-center"><Edit className="text-blue-500" /> Host Preset Duzenle</span>} size="md">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <FormField label="Ad">
+              <Input value={hostPresetEditDraft.name} onChange={(e) => setHostPresetEditDraft({ ...hostPresetEditDraft, name: e.target.value })} />
+            </FormField>
+            <FormField label="Sira">
+              <Input type="number" value={hostPresetEditDraft.sort_order} onChange={(e) => setHostPresetEditDraft({ ...hostPresetEditDraft, sort_order: Number(e.target.value || 0) })} />
+            </FormField>
+            <label className="flex items-center gap-2 text-sm text-zinc-300">
+              <input type="checkbox" className="ui-checkbox" checked={hostPresetEditDraft.is_active} onChange={(e) => setHostPresetEditDraft({ ...hostPresetEditDraft, is_active: e.target.checked })} />
+              Aktif
+            </label>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <Button onClick={() => setEditingHostPreset(null)} variant="secondary" className="flex-1">Iptal</Button>
+            <Button onClick={updateHostPreset} variant="primary" className="flex-1" disabled={hrLoading}>Kaydet</Button>
+          </div>
+        </Modal>
+      )}
+
+      {editingVehiclePreset && (
+        <Modal isOpen={!!editingVehiclePreset} onClose={() => setEditingVehiclePreset(null)} title={<span className="flex gap-2 items-center"><Edit className="text-blue-500" /> Arac Preset Duzenle</span>} size="md">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <FormField label="Plaka">
+              <Input value={vehiclePresetEditDraft.plate} onChange={(e) => setVehiclePresetEditDraft({ ...vehiclePresetEditDraft, plate: e.target.value.toUpperCase() })} />
+            </FormField>
+            <FormField label="Etiket">
+              <Input value={vehiclePresetEditDraft.label} onChange={(e) => setVehiclePresetEditDraft({ ...vehiclePresetEditDraft, label: e.target.value })} />
+            </FormField>
+            <FormField label="Kategori">
+              <Select value={vehiclePresetEditDraft.category} onChange={(e) => setVehiclePresetEditDraft({ ...vehiclePresetEditDraft, category: e.target.value, default_driver_type: e.target.value === 'management' ? 'owner' : 'other' })}>
+                <option value="management">Yonetim</option>
+                <option value="company">Sirket</option>
+              </Select>
+            </FormField>
+            <FormField label="Varsayilan Surucu Tipi">
+              <Select value={vehiclePresetEditDraft.default_driver_type} onChange={(e) => setVehiclePresetEditDraft({ ...vehiclePresetEditDraft, default_driver_type: e.target.value })}>
+                <option value="owner">Arac Sahibi</option>
+                <option value="other">Diger</option>
+              </Select>
+            </FormField>
+            <FormField label="Sira">
+              <Input type="number" value={vehiclePresetEditDraft.sort_order} onChange={(e) => setVehiclePresetEditDraft({ ...vehiclePresetEditDraft, sort_order: Number(e.target.value || 0) })} />
+            </FormField>
+            <label className="flex items-center gap-2 text-sm text-zinc-300">
+              <input type="checkbox" className="ui-checkbox" checked={vehiclePresetEditDraft.is_active} onChange={(e) => setVehiclePresetEditDraft({ ...vehiclePresetEditDraft, is_active: e.target.checked })} />
+              Aktif
+            </label>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <Button onClick={() => setEditingVehiclePreset(null)} variant="secondary" className="flex-1">Iptal</Button>
+            <Button onClick={updateVehiclePreset} variant="primary" className="flex-1" disabled={hrLoading}>Kaydet</Button>
+          </div>
+        </Modal>
+      )}
+
       {optionalAttachmentsEnabled && (
         <Modal isOpen={!!attachmentModalLog} onClose={() => setAttachmentModalLog(null)} title="Kayıt Ekleri" size="lg">
-          <div className="text-xs text-zinc-400 -mt-2 mb-3">{attachmentModalLog?.plate || attachmentModalLog?.name || '-'} | {new Date(attachmentModalLog?.created_at || Date.now()).toLocaleString('tr-TR')}</div>
+          <div className="text-xs text-zinc-400 -mt-2 mb-3">{attachmentModalLog?.plate || attachmentModalLog?.name || '-'} | {formatTrDateTime(attachmentModalLog?.created_at || Date.now())}</div>
 
           <div className="ui-panel mb-3">
             <div className="text-xs text-zinc-400 mb-2">Yeni dosya ekle</div>
@@ -6343,8 +7885,3 @@ const sendDailyReport = useCallback((dateParam) => {
     </div>
   );
 }
-
-
-
-
-

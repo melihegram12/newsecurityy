@@ -1,25 +1,47 @@
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { autoUpdater } = require('electron-updater');
 
-// Database modülünü import et
-const database = require('./database');
+// ---------- Heavy modules lazy-loaded for fast startup ----------
+let _database, _scheduler, _backupScheduler, _autoUpdater;
 
-// Email ve Scheduler modüllerini import et
-const emailService = require('./emailService');
-const scheduler = require('./scheduler');
-const backupScheduler = require('./backupScheduler');
+function getDatabase() {
+  if (!_database) _database = require('./database');
+  return _database;
+}
+function getAutoUpdater() {
+  if (!_autoUpdater) _autoUpdater = require('electron-updater').autoUpdater;
+  return _autoUpdater;
+}
 
 let mainWindow;
 let isQuitting = false;
 const isDebug = process.env.ELECTRON_DEBUG === 'true' || process.argv.includes('--debug');
+let delayedServicesTimerId = null;
+
+// ---------- DB readiness gate — IPC handlers await this ----------
+let _dbReadyResolve;
+const dbReady = new Promise(resolve => { _dbReadyResolve = resolve; });
+
+function getDesktopProfile() {
+  try {
+    const packageJsonPath = path.join(app.getAppPath(), 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    return typeof pkg?.desktopProfile === 'string' ? pkg.desktopProfile.trim().toLowerCase() : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function isLiteDesktopBuild() {
+  return getDesktopProfile() === 'lite';
+}
 
 // --- AUTO UPDATE (electron-updater) ---
 let updaterInitialized = false;
 let updaterIntervalId = null;
 let updaterState = {
-  status: 'idle', // idle|checking|available|not-available|downloading|downloaded|error|disabled
+  status: 'idle',
   feedUrl: '',
   info: null,
   progress: null,
@@ -48,7 +70,7 @@ function sendUpdaterEvent(type, payload = {}) {
 
 function getUpdateUrlFromSettings() {
   try {
-    const value = database.getSetting('update_url');
+    const value = getDatabase().getSetting('update_url');
     return normalizeUpdateUrl(typeof value === 'string' ? value : '');
   } catch (e) {
     return '';
@@ -58,7 +80,7 @@ function getUpdateUrlFromSettings() {
 function setUpdateUrlToSettings(value) {
   const normalized = normalizeUpdateUrl(value);
   try {
-    database.setSetting('update_url', normalized);
+    getDatabase().setSetting('update_url', normalized);
   } catch (e) {
     // ignore
   }
@@ -72,6 +94,7 @@ async function checkForUpdates(trigger = 'auto') {
     return { ok: false, disabled: true, reason: 'not_packaged' };
   }
 
+  const autoUpdater = getAutoUpdater();
   const feedUrl = getUpdateUrlFromSettings();
   if (feedUrl) {
     try {
@@ -87,7 +110,6 @@ async function checkForUpdates(trigger = 'auto') {
 
   try {
     const result = await autoUpdater.checkForUpdates();
-    // Events will update the UI; return something useful for callers.
     return {
       ok: true,
       result: result
@@ -146,6 +168,8 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    // Renderer çöktüğünde DB'yi güvenli kaydet
+    try { if (_database) _database.saveDatabase(); } catch (e) { /* ignore */ }
     dialog.showErrorBox(
       'Render Procesi Kapandi',
       `Sebep: ${details.reason}\nCikis Kodu: ${details.exitCode}`
@@ -176,15 +200,17 @@ function createWindow() {
         { type: 'separator' },
         {
           label: 'Veritabanı Konumu',
-          click: () => {
-            const dbPath = database.getDbPath();
+          click: async () => {
+            await dbReady;
+            const dbPath = getDatabase().getDbPath();
             shell.showItemInFolder(dbPath);
           }
         },
         {
           label: 'Yedek Al (Simdi)',
-          click: () => {
-            const result = backupScheduler.runNow();
+          click: async () => {
+            await dbReady;
+            const result = require('./backupScheduler').runNow();
             if (!result || !result.success) {
               dialog.showErrorBox('Yedek Hatasi', result?.error || 'Yedek alinmadi');
             }
@@ -192,8 +218,9 @@ function createWindow() {
         },
         {
           label: 'Yedek Klasorunu Ac',
-          click: () => {
-            shell.openPath(backupScheduler.getBackupFolder());
+          click: async () => {
+            await dbReady;
+            shell.openPath(require('./backupScheduler').getBackupFolder());
           }
         },
         { type: 'separator' },
@@ -229,7 +256,8 @@ function createWindow() {
         {
           label: 'Veritabanı Yedekle',
           click: async () => {
-            const dbPath = database.getDbPath();
+            await dbReady;
+            const dbPath = getDatabase().getDbPath();
             const { filePath } = await dialog.showSaveDialog(mainWindow, {
               title: 'Veritabanı Yedeği Kaydet',
               defaultPath: `guvenlik_yedek_${new Date().toISOString().split('T')[0]}.db`,
@@ -262,10 +290,13 @@ function initAutoUpdater() {
   if (updaterInitialized) return;
   updaterInitialized = true;
 
+  const autoUpdater = getAutoUpdater();
+
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowDowngrade = false;
   autoUpdater.allowPrerelease = false;
+  autoUpdater.forceDevUpdateConfig = false;
 
   autoUpdater.on('checking-for-update', () => {
     sendUpdaterEvent('checking-for-update', {
@@ -355,46 +386,73 @@ function startAutoUpdateScheduler() {
   updaterIntervalId = setInterval(maybeCheck, 2 * 60 * 60 * 1000); // 2 hours
 }
 
-// Veritabanı IPC Handler'ları
+function startBackgroundServices() {
+  initAutoUpdater();
+  startAutoUpdateScheduler();
+}
+
+function formatProcessError(error) {
+  return error?.message || String(error);
+}
+
+function reportProcessError(context, error) {
+  const message = formatProcessError(error);
+  console.error(`${context}:`, error);
+  return message;
+}
+
+// IPC Handler'ları — her biri dbReady bekler
+// Tüm handler'ları try-catch ile sararak renderer crash'ini önle
+function safeHandle(channel, handler) {
+  ipcMain.handle(channel, async (...args) => {
+    try {
+      return await handler(...args);
+    } catch (e) {
+      const message = reportProcessError(`IPC error [${channel}]`, e);
+      return { __ipcError: true, channel, error: message };
+    }
+  });
+}
+
 function setupDatabaseHandlers() {
-  ipcMain.handle('db:getActiveLogs', () => database.getActiveLogs());
-  ipcMain.handle('db:getAllLogs', (_, limit) => database.getAllLogs(limit));
-  ipcMain.handle('db:getLogById', (_, id) => database.getLogById(id));
-  ipcMain.handle('db:getLogsCount', () => database.getLogsCount());
-  ipcMain.handle('db:getLogsPage', (_, limit, offset) => database.getLogsPage(limit, offset));
-  ipcMain.handle('db:getLogsByDateRange', (_, dateFrom, dateTo) => database.getLogsByDateRange(dateFrom, dateTo));
-  ipcMain.handle('db:insertLog', (_, logData) => database.insertLog(logData));
-  ipcMain.handle('db:updateLog', (_, id, updateData) => database.updateLog(id, updateData));
-  ipcMain.handle('db:exitLog', (_, id, exitData) => database.exitLog(id, exitData));
-  ipcMain.handle('db:deleteLog', (_, id) => database.deleteLog(id));
-  ipcMain.handle('db:upsertLogByCreatedAt', (_, logData) => database.upsertLogByCreatedAt(logData));
-  ipcMain.handle('db:importLogs', (_, logs) => database.importLogs(logs));
-  ipcMain.handle('db:searchLogs', (_, searchTerm, limit) => database.searchLogs(searchTerm, limit));
-  ipcMain.handle('db:getStats', () => database.getStats());
-  ipcMain.handle('db:setSetting', (_, key, value) => database.setSetting(key, value));
-  ipcMain.handle('db:getSetting', (_, key) => database.getSetting(key));
-  ipcMain.handle('db:getDbPath', () => database.getDbPath());
+  safeHandle('db:getActiveLogs', async () => { await dbReady; return getDatabase().getActiveLogs(); });
+  safeHandle('db:getAllLogs', async (_, limit) => { await dbReady; return getDatabase().getAllLogs(limit); });
+  safeHandle('db:getLogById', async (_, id) => { await dbReady; return getDatabase().getLogById(id); });
+  safeHandle('db:getLogsCount', async () => { await dbReady; return getDatabase().getLogsCount(); });
+  safeHandle('db:getLogsPage', async (_, limit, offset) => { await dbReady; return getDatabase().getLogsPage(limit, offset); });
+  safeHandle('db:getLogsByDateRange', async (_, dateFrom, dateTo) => { await dbReady; return getDatabase().getLogsByDateRange(dateFrom, dateTo); });
+  safeHandle('db:insertLog', async (_, logData) => { await dbReady; return getDatabase().insertLog(logData); });
+  safeHandle('db:updateLog', async (_, id, updateData) => { await dbReady; return getDatabase().updateLog(id, updateData); });
+  safeHandle('db:exitLog', async (_, id, exitData) => { await dbReady; return getDatabase().exitLog(id, exitData); });
+  safeHandle('db:deleteLog', async (_, id) => { await dbReady; return getDatabase().deleteLog(id); });
+  safeHandle('db:upsertLogByCreatedAt', async (_, logData) => { await dbReady; return getDatabase().upsertLogByCreatedAt(logData); });
+  safeHandle('db:importLogs', async (_, logs) => { await dbReady; return getDatabase().importLogs(logs); });
+  safeHandle('db:searchLogs', async (_, searchTerm, limit) => { await dbReady; return getDatabase().searchLogs(searchTerm, limit); });
+  safeHandle('db:getStats', async () => { await dbReady; return getDatabase().getStats(); });
+  safeHandle('db:setSetting', async (_, key, value) => { await dbReady; return getDatabase().setSetting(key, value); });
+  safeHandle('db:getSetting', async (_, key) => { await dbReady; return getDatabase().getSetting(key); });
+  safeHandle('db:getDbPath', () => getDatabase().getDbPath());
 
   // Uygulama bilgileri
-  ipcMain.handle('app:getVersion', () => app.getVersion());
-  ipcMain.handle('app:quit', () => {
+  safeHandle('app:getVersion', () => app.getVersion());
+  safeHandle('app:quit', () => {
     isQuitting = true;
     app.quit();
   });
 
   // Updater (electron-updater)
-  ipcMain.handle('updater:getUpdateUrl', () => getUpdateUrlFromSettings());
-  ipcMain.handle('updater:setUpdateUrl', (_, url) => setUpdateUrlToSettings(url));
-  ipcMain.handle('updater:getState', () => updaterState);
-  ipcMain.handle('updater:check', () => checkForUpdates('manual'));
-  ipcMain.handle('updater:quitAndInstall', () => {
+  safeHandle('updater:getUpdateUrl', async () => { await dbReady; return getUpdateUrlFromSettings(); });
+  safeHandle('updater:setUpdateUrl', async (_, url) => { await dbReady; return setUpdateUrlToSettings(url); });
+  safeHandle('updater:getState', () => updaterState);
+  safeHandle('updater:check', () => checkForUpdates('manual'));
+  safeHandle('updater:quitAndInstall', () => {
     isQuitting = true;
-    autoUpdater.quitAndInstall(false, true);
+    getAutoUpdater().quitAndInstall(false, true);
     return true;
   });
 
   // Dosya işlemleri
-  ipcMain.handle('file:saveFile', async (_, fileName, data) => {
+  safeHandle('file:saveFile', async (_, fileName, data) => {
     const { filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Dosyayı Kaydet',
       defaultPath: fileName,
@@ -412,54 +470,74 @@ function setupDatabaseHandlers() {
     return null;
   });
 
-  ipcMain.handle('file:openFolder', (_, folderPath) => {
+  safeHandle('file:openFolder', (_, folderPath) => {
     shell.openPath(folderPath);
   });
 
-  // E-posta işlemleri
-  ipcMain.handle('email:getSettings', () => emailService.getEmailSettings());
-  ipcMain.handle('email:saveSettings', (_, settings) => emailService.saveEmailSettings(settings));
-  ipcMain.handle('email:testSmtp', () => emailService.testSmtpConnection());
-  ipcMain.handle('email:sendDailyReport', (_, date) => emailService.sendDailyReport(date));
-  ipcMain.handle('email:sendTestEmail', () => emailService.sendTestEmail());
+  // E-posta işlemleri (lazy-load emailService)
+  safeHandle('email:getSettings', async () => { await dbReady; return require('./emailService').getEmailSettings(); });
+  safeHandle('email:saveSettings', async (_, settings) => { await dbReady; return require('./emailService').saveEmailSettings(settings); });
+  safeHandle('email:testSmtp', async () => { await dbReady; return require('./emailService').testSmtpConnection(); });
+  safeHandle('email:sendDailyReport', async (_, date) => { await dbReady; return require('./emailService').sendDailyReport(date); });
+  safeHandle('email:sendTestEmail', async () => { await dbReady; return require('./emailService').sendTestEmail(); });
 
-  // Zamanlayıcı işlemleri
-  ipcMain.handle('scheduler:start', () => scheduler.start());
-  ipcMain.handle('scheduler:stop', () => scheduler.stop());
-  ipcMain.handle('scheduler:restart', () => scheduler.restart());
-  ipcMain.handle('scheduler:runNow', (_, date) => scheduler.runNow(date));
-  ipcMain.handle('scheduler:getStatus', () => scheduler.getStatus());
+  // Zamanlayıcı işlemleri (lazy-load scheduler)
+  safeHandle('scheduler:start', async () => { await dbReady; return require('./scheduler').start(); });
+  safeHandle('scheduler:stop', () => require('./scheduler').stop());
+  safeHandle('scheduler:restart', async () => { await dbReady; return require('./scheduler').restart(); });
+  safeHandle('scheduler:runNow', async (_, date) => { await dbReady; return require('./scheduler').runNow(date); });
+  safeHandle('scheduler:getStatus', () => require('./scheduler').getStatus());
 
-  // Yedekleme islemleri
-  ipcMain.handle('backup:getStatus', () => backupScheduler.getStatus());
-  ipcMain.handle('backup:runNow', () => backupScheduler.runNow());
-  ipcMain.handle('backup:setSettings', (_, settings) => backupScheduler.saveSettings(settings));
-  ipcMain.handle('backup:openFolder', () => shell.openPath(backupScheduler.getBackupFolder()));
+  // Yedekleme islemleri (lazy-load backupScheduler)
+  safeHandle('backup:getStatus', async () => { await dbReady; return require('./backupScheduler').getStatus(); });
+  safeHandle('backup:runNow', async () => { await dbReady; return require('./backupScheduler').runNow(); });
+  safeHandle('backup:setSettings', async (_, settings) => { await dbReady; return require('./backupScheduler').saveSettings(settings); });
+  ipcMain.handle('backup:openFolder', async () => { await dbReady; return shell.openPath(require('./backupScheduler').getBackupFolder()); });
 }
 
+// ===================== STARTUP =====================
 app.whenReady().then(async () => {
-  // Veritabanını başlat (async)
-  await database.initDatabase();
-
-  // IPC handler'ları kur
+  // 1. IPC handler'ları kur (dbReady ile gate'li, pencere açılmadan önce hazır olmalı)
   setupDatabaseHandlers();
 
-  // Zamanlayıcıyı başlat
-  scheduler.start();
-
-  // Yedekleme zamanlayıcısı
-  backupScheduler.start();
-
-  // Pencereyi oluştur
+  // 2. Pencereyi HEMEN oluştur — kullanıcı anında görür
   createWindow();
 
-  // Auto update
-  initAutoUpdater();
-  startAutoUpdateScheduler();
+  // 3. Veritabanını başlat (React bundle yüklenirken paralel çalışır) — 15s timeout
+  try {
+    const db = getDatabase();
+    const DB_INIT_TIMEOUT_MS = 15000;
+    await Promise.race([
+      db.initDatabase(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('DB init timeout (15s)')), DB_INIT_TIMEOUT_MS))
+    ]);
+    _dbReadyResolve();
+  } catch (e) {
+    console.error('Database init failed:', e);
+    _dbReadyResolve(); // IPC handler'lar asılı kalmasın
+    dialog.showErrorBox('Veritabani Hatasi', `Veritabani baslatilamadi:\n${e.message || e}`);
+  }
+
+  // 4. Ağır servisleri ertele
+  const serviceDelay = isLiteDesktopBuild() ? 5000 : 2000;
+  delayedServicesTimerId = setTimeout(() => {
+    delayedServicesTimerId = null;
+    _scheduler = require('./scheduler');
+    _scheduler.start();
+    _backupScheduler = require('./backupScheduler');
+    _backupScheduler.start();
+    startBackgroundServices();
+  }, serviceDelay);
+}).catch((e) => {
+  console.error('Startup error:', e);
 });
 
 app.on('before-quit', () => {
   isQuitting = true;
+  if (delayedServicesTimerId) {
+    clearTimeout(delayedServicesTimerId);
+    delayedServicesTimerId = null;
+  }
   if (updaterIntervalId) {
     clearInterval(updaterIntervalId);
     updaterIntervalId = null;
@@ -467,9 +545,9 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  scheduler.stop(); // Zamanlayıcıyı durdur
-  backupScheduler.stop();
-  database.closeDatabase();
+  if (_scheduler) _scheduler.stop();
+  if (_backupScheduler) _backupScheduler.stop();
+  if (_database) _database.closeDatabase();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -481,8 +559,11 @@ app.on('activate', () => {
   }
 });
 
-// Beklenmedik hatalarda veritabanını kapat
+// Beklenmedik hatalarda logla; ana süreci zorla sonlandırma.
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  database.closeDatabase();
+  reportProcessError('Uncaught Exception', error);
+});
+
+process.on('unhandledRejection', (reason) => {
+  reportProcessError('Unhandled Rejection', reason);
 });

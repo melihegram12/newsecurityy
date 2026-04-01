@@ -133,6 +133,16 @@ def check_local_db():
         cur.execute("SELECT created_at FROM security_logs")
         created_at_rows = [r[0] for r in cur.fetchall()]
 
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM security_logs
+            WHERE exit_at IS NOT NULL
+              AND datetime(created_at) > datetime(exit_at)
+            """
+        )
+        reversed_count = cur.fetchone()[0]
+
         # Allow ISO with microseconds or milliseconds and timezone/Z
         iso_re = re.compile(
             r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
@@ -151,6 +161,11 @@ def check_local_db():
             warn("created_at duplicates", str(dup_count))
         else:
             ok("created_at duplicates", "none")
+
+        if reversed_count:
+            warn("created_at after exit_at", str(reversed_count))
+        else:
+            ok("created_at after exit_at", "none")
 
         con.close()
         return True

@@ -8,7 +8,6 @@ const Textarea = forwardRef(function Textarea({ className = '', rows = 3, ...pro
       ref={ref}
       className={cx(styles.input, 'resize-none', className)}
       rows={rows}
-      style={{ backgroundColor: '#18181b', color: 'white', ...props.style }}
       {...props}
     />
   );

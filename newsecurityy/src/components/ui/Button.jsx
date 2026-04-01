@@ -9,9 +9,9 @@ const Button = ({ variant = 'primary', size = 'md', className = '', ...props }) 
       variant === 'secondary' && "ui-btn-secondary",
       variant === 'ghost' && "ui-btn-ghost",
       variant === 'destructive' && "ui-btn-destructive",
-      size === 'sm' && "px-3 py-2 text-xs",
+      size === 'sm' && "px-3 py-1.5 text-xs",
       size === 'md' && "px-4 py-2",
-      size === 'lg' && "px-5 py-3 text-base",
+      size === 'lg' && "px-5 py-2.5 text-base",
       className
     )}
     {...props}
