@@ -449,6 +449,11 @@ async function syncToSupabase(action, data, localId = null, options = {}) {
                 // RLS hatası kontrolü
                 if (error.code === '42501' || error.message.includes('policy')) {
                     console.error('🚫 RLS HATASI: Supabase Dashboard\'da security_logs tablosu için RLS politikası eklemeniz gerekiyor!');
+                    try {
+                        window.dispatchEvent(new CustomEvent('supabase-rls-error', {
+                            detail: { action, message: 'Supabase izin hatası (RLS). Yönetici ile iletişime geçin.' }
+                        }));
+                    } catch (_) { /* ignore */ }
                 }
                 if (shouldQueueOnFailure) addToSyncQueue(action, data, localId);
                 writeSyncStatus({ lastPushAt: new Date().toISOString(), lastPushAction: action, lastPushStatus: 'error', lastPushError: error.message || String(error) });

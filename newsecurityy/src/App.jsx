@@ -30,7 +30,7 @@ import {
   normalizeAttachmentMap, getLogAttachmentKey, readFileAsDataUrl, downloadDataUrl,
   labelClass, getEntryLocation, getExitLocation, buildLegacyLocationValue, formatLogLocation,
   areObjectsEqual, normalizeLogText, normalizeLogList, areLogListsEqual, upsertLogInList, matchesByTab,
-  needsPlainCsvFallback, parseCsvTextLoose, pickSupabaseCompatibleLog,
+  needsPlainCsvFallback, parseCsvTextLoose, pickSupabaseCompatibleLog, extractPagedList,
 } from './lib/utils';
 import { buildAuditHash, verifyAuditChain } from './lib/audit-utils';
 import { buildExitOptionLabel, getExitCandidates, resolveExitRecord } from './lib/exit-utils';
@@ -128,6 +128,7 @@ export default function App() {
   const [actionLoading, setActionLoading] = useState(null);
   const [notification, setNotification] = useState(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [now, setNow] = useState(() => new Date());
   const [_supabaseDebug, setSupabaseDebug] = useState({ lastError: null, lastCheckedAt: null }); // eslint-disable-line no-unused-vars
   const [searchTerm, setSearchTerm] = useState('');
   const [activeSearchTerm, setActiveSearchTerm] = useState('');
@@ -437,6 +438,8 @@ export default function App() {
   const [payrollSummary, setPayrollSummary] = useState(null);
   const [sgkReportQuery, setSgkReportQuery] = useState({ date_from: '', date_to: '' });
   const [sgkReport, setSgkReport] = useState(null);
+  const [accessEvents, setAccessEvents] = useState([]);
+  const [accessEventQuery, setAccessEventQuery] = useState({ person_id: '', direction: '', date_from: '', date_to: '' });
   const [todayPageFilter, setTodayPageFilter] = useState('all'); // all, entry, exit
   const [todayCategoryFilter, setTodayCategoryFilter] = useState('');
   const [todayCurrentPage, setTodayCurrentPage] = useState(1);
@@ -876,7 +879,8 @@ export default function App() {
       if (!resolvedRole) throw new Error('Kullanici adi taninmadi.');
       if (resolvedRole !== authRole) throw new Error('Secilen rol ile kullanici adi uyusmuyor.');
       const expectedPassword = ROLE_FALLBACK_PASSWORDS[authRole];
-      if (expectedPassword && password !== expectedPassword) throw new Error('Kullanici adi veya sifre hatali.');
+      if (!expectedPassword) throw new Error('Offline giris icin sifre yapilandirilmamis. Yonetici ile iletisime gecin.');
+      if (password !== expectedPassword) throw new Error('Kullanici adi veya sifre hatali.');
 
       const user = buildFallbackSessionUser(authRole);
       setLocalApiToken('');
@@ -1893,6 +1897,9 @@ export default function App() {
       // Electron ortamında yerel SQLite kullan
       if (isElectron) {
         const savedLog = await dbClient.insertLog(newLog);
+        if (optionalAttachmentsEnabled && entryAttachments.length > 0) {
+          await addAttachmentsToLog(savedLog || newLog, entryAttachments);
+        }
         applyLocalLogUpsert({ ...newLog, ...(savedLog || {}) }, { includeInActive: !isExitLog });
         showToast(isExitLog ? "Çıkış Kaydedildi" : "Giriş Kaydedildi");
         resetForm();
@@ -1904,6 +1911,9 @@ export default function App() {
 
         if (!reallyOnline) {
           saveToOfflineQueue(newLog);
+          if (optionalAttachmentsEnabled && entryAttachments.length > 0) {
+            await addAttachmentsToLog(newLog, entryAttachments);
+          }
           applyLocalLogUpsert(newLog, { includeInActive: !isExitLog });
           resetForm();
           setLoading(false);
@@ -1916,6 +1926,9 @@ export default function App() {
           applyLocalLogUpsert(newLog, { includeInActive: !isExitLog });
           resetForm();
         } else {
+          if (optionalAttachmentsEnabled && entryAttachments.length > 0) {
+            await addAttachmentsToLog(newLog, entryAttachments);
+          }
           showToast(isExitLog ? "Çıkış Kaydedildi" : "Giriş Kaydedildi");
           resetForm();
           applyLocalLogUpsert(newLog, { includeInActive: !isExitLog });
@@ -1933,7 +1946,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }), [mainTab, vehicleSubTab, visitorSubTab, vehicleDirection, formData, selectedExitLogId, activeLogs, allLogs, currentShift, session, checkOnlineStatus, saveToOfflineQueue, resetForm, fetchData, showToast, handleExit, applyLocalLogUpsert]);
+  }), [mainTab, vehicleSubTab, visitorSubTab, vehicleDirection, formData, selectedExitLogId, activeLogs, allLogs, currentShift, session, checkOnlineStatus, saveToOfflineQueue, resetForm, fetchData, showToast, handleExit, applyLocalLogUpsert, optionalAttachmentsEnabled, entryAttachments, addAttachmentsToLog]);
 
   const confirmSealedExit = useCallback(async () => {
     if (!exitSealNumber?.trim()) return showToast("Lütfen Çıkış Mühür Numarasını Giriniz!", "error");
@@ -2847,6 +2860,11 @@ const sendDailyReport = useCallback((dateParam) => {
   }, [checkOnlineStatus, checkPendingData, showToast, fetchAuthMe]);
 
   useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     const run = async () => {
       try {
@@ -2897,13 +2915,18 @@ const sendDailyReport = useCallback((dateParam) => {
     const onSyncDropped = () => {
       showToast('Senkronizasyon hatasi: Bir kayit 5 denemeden sonra gonderilemedi.', 'error');
     };
+    const onRlsError = (e) => {
+      showToast(e?.detail?.message || 'Supabase izin hatasi (RLS). Yonetici ile iletisime gecin.', 'error');
+    };
     window.addEventListener('supabase-sync-start', onSyncStart);
     window.addEventListener('supabase-sync-done', onSyncDone);
     window.addEventListener('sync-item-dropped', onSyncDropped);
+    window.addEventListener('supabase-rls-error', onRlsError);
     return () => {
       window.removeEventListener('supabase-sync-start', onSyncStart);
       window.removeEventListener('supabase-sync-done', onSyncDone);
       window.removeEventListener('sync-item-dropped', onSyncDropped);
+      window.removeEventListener('supabase-rls-error', onRlsError);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3438,13 +3461,23 @@ const sendDailyReport = useCallback((dateParam) => {
   }, [showToast]);
 
   const loadPeople = useCallback(async (options = {}) => {
-    return withHrLoading(async () => {
+    const run = async () => {
       const params = new URLSearchParams();
       const query = typeof options.query === 'string' ? options.query : personQuery;
       if (query) params.set('q', query);
+      if (options.kind) params.set('kind', options.kind);
       const data = await localApiFetch(`persons${params.toString() ? `?${params}` : ''}`);
-      setPeople(Array.isArray(data) ? data : []);
-    });
+      setPeople(extractPagedList(data));
+    };
+    if (options.silent) {
+      try {
+        await run();
+      } catch (e) {
+        console.warn('People load error:', e);
+      }
+      return;
+    }
+    return withHrLoading(run);
   }, [localApiFetch, personQuery, withHrLoading]);
 
   const createPerson = useCallback(async () => {
@@ -3475,7 +3508,7 @@ const sendDailyReport = useCallback((dateParam) => {
       const query = typeof options.query === 'string' ? options.query : badgeQuery;
       if (query) params.set('q', query);
       const data = await localApiFetch(`badges${params.toString() ? `?${params}` : ''}`);
-      setBadgeRecords(Array.isArray(data) ? data : []);
+      setBadgeRecords(extractPagedList(data));
     });
   }, [badgeQuery, localApiFetch, withHrLoading]);
 
@@ -3598,7 +3631,7 @@ const sendDailyReport = useCallback((dateParam) => {
       if (query) params.set('q', query);
       if (options.activeOnly) params.set('active', '1');
       const data = await localApiFetch(`host-presets${params.toString() ? `?${params}` : ''}`);
-      setHostPresetRecords(Array.isArray(data) ? data : []);
+      setHostPresetRecords(extractPagedList(data));
       setHostPresetsLoaded(true);
     };
     if (options.silent) {
@@ -3685,7 +3718,7 @@ const sendDailyReport = useCallback((dateParam) => {
       if (options.category) params.set('category', options.category);
       if (options.activeOnly) params.set('active', '1');
       const data = await localApiFetch(`vehicle-presets${params.toString() ? `?${params}` : ''}`);
-      setVehiclePresetRecords(Array.isArray(data) ? data : []);
+      setVehiclePresetRecords(extractPagedList(data));
       setVehiclePresetsLoaded(true);
     };
     if (options.silent) {
@@ -3773,7 +3806,7 @@ const sendDailyReport = useCallback((dateParam) => {
   const loadAbsenceTypes = useCallback(async () => {
     return withHrLoading(async () => {
       const data = await localApiFetch('absence/types');
-      setAbsenceTypes(Array.isArray(data) ? data : []);
+      setAbsenceTypes(extractPagedList(data));
     });
   }, [localApiFetch, withHrLoading]);
 
@@ -3803,7 +3836,7 @@ const sendDailyReport = useCallback((dateParam) => {
       if (absenceRecordFilters.date_from) params.set('date_from', absenceRecordFilters.date_from);
       if (absenceRecordFilters.date_to) params.set('date_to', absenceRecordFilters.date_to);
       const data = await localApiFetch(`absence/records${params.toString() ? `?${params}` : ''}`);
-      setAbsenceRecords(Array.isArray(data) ? data : []);
+      setAbsenceRecords(extractPagedList(data));
     });
   }, [absenceRecordFilters, localApiFetch, withHrLoading]);
 
@@ -3837,7 +3870,7 @@ const sendDailyReport = useCallback((dateParam) => {
   const loadWorkShifts = useCallback(async () => {
     return withHrLoading(async () => {
       const data = await localApiFetch('shifts');
-      setWorkShifts(Array.isArray(data) ? data : []);
+      setWorkShifts(extractPagedList(data));
     });
   }, [localApiFetch, withHrLoading]);
 
@@ -3860,7 +3893,7 @@ const sendDailyReport = useCallback((dateParam) => {
       if (assignmentDraft.person) params.set('person_id', assignmentDraft.person);
       if (assignmentDraft.shift) params.set('shift_id', assignmentDraft.shift);
       const data = await localApiFetch(`shift-assignments${params.toString() ? `?${params}` : ''}`);
-      setShiftAssignments(Array.isArray(data) ? data : []);
+      setShiftAssignments(extractPagedList(data));
     });
   }, [assignmentDraft, localApiFetch, withHrLoading]);
 
@@ -3896,9 +3929,21 @@ const sendDailyReport = useCallback((dateParam) => {
   const loadPayrollProfiles = useCallback(async () => {
     return withHrLoading(async () => {
       const data = await localApiFetch('payroll/profiles');
-      setPayrollProfiles(Array.isArray(data) ? data : []);
+      setPayrollProfiles(extractPagedList(data));
     });
   }, [localApiFetch, withHrLoading]);
+
+  const loadAccessEvents = useCallback(async (query = accessEventQuery) => {
+    return withHrLoading(async () => {
+      const params = new URLSearchParams();
+      if (query.person_id) params.set('person_id', query.person_id);
+      if (query.direction) params.set('direction', query.direction);
+      if (query.date_from) params.set('date_from', query.date_from);
+      if (query.date_to) params.set('date_to', query.date_to);
+      const data = await localApiFetch(`access-events${params.toString() ? `?${params}` : ''}`);
+      setAccessEvents(extractPagedList(data));
+    });
+  }, [accessEventQuery, localApiFetch, withHrLoading]);
 
   const createPayrollProfile = useCallback(async () => {
     if (!payrollProfileDraft.person) {
@@ -3980,7 +4025,11 @@ const sendDailyReport = useCallback((dateParam) => {
       loadPeople();
       loadPayrollProfiles();
     }
-  }, [currentPage, hrTab, loadPeople, loadBadges, loadHostPresets, loadVehiclePresets, loadAbsenceTypes, loadAbsenceRecords, loadWorkShifts, loadShiftAssignments, loadPayrollProfiles]);
+    if (hrTab === 'access-events') {
+      loadPeople();
+      loadAccessEvents();
+    }
+  }, [currentPage, hrTab, loadPeople, loadBadges, loadHostPresets, loadVehiclePresets, loadAbsenceTypes, loadAbsenceRecords, loadWorkShifts, loadShiftAssignments, loadPayrollProfiles, loadAccessEvents]);
 
   useEffect(() => {
     if (!session || !canUseLocalApi) return;
@@ -3988,7 +4037,8 @@ const sendDailyReport = useCallback((dateParam) => {
     if (!canUseSecurityPanel && !canUseHrPanel) return;
     loadHostPresets({ silent: true, activeOnly: true });
     loadVehiclePresets({ silent: true, activeOnly: true });
-  }, [session, currentPage, canUseLocalApi, canUseSecurityPanel, canUseHrPanel, loadHostPresets, loadVehiclePresets]);
+    loadPeople({ silent: true });
+  }, [session, currentPage, canUseLocalApi, canUseSecurityPanel, canUseHrPanel, loadHostPresets, loadVehiclePresets, loadPeople]);
 
   const activeHostPresetNames = useMemo(() => {
     const rows = (Array.isArray(hostPresetRecords) ? hostPresetRecords : [])
@@ -4022,16 +4072,25 @@ const sendDailyReport = useCallback((dateParam) => {
   }, [availableVehiclePresets, vehiclePresetCategory, vehicleSubTab]);
 
   const smtpForm = smtpDraft || emailSettings || {};
+  const staffNames = useMemo(() => {
+    if (people.length > 0) {
+      return people
+        .filter((p) => p?.is_active !== false)
+        .map((p) => upperTr(p.full_name || ''))
+        .filter(Boolean);
+    }
+    return STAFF_LIST;
+  }, [people]);
   const isHostCustomValue = !!formData.host &&
     !activeHostPresetNames.includes(formData.host) &&
     formData.host !== 'Fabrika Personeli' &&
     formData.host !== OTHER_HOST_VALUE &&
     formData.host !== UNSPECIFIED_HOST_VALUE &&
     formData.host !== 'Belirtilmedi' &&
-    !STAFF_LIST.includes(formData.host);
+    !staffNames.includes(upperTr(formData.host));
   const hostSelectValue = activeHostPresetNames.includes(formData.host)
     ? formData.host
-    : (formData.host === 'Fabrika Personeli' || STAFF_LIST.includes(formData.host))
+    : (formData.host === 'Fabrika Personeli' || staffNames.includes(upperTr(formData.host)))
       ? 'Fabrika Personeli'
       : ((formData.host === OTHER_HOST_VALUE) ? OTHER_HOST_VALUE
         : (formData.host === UNSPECIFIED_HOST_VALUE || formData.host === 'Belirtilmedi') ? UNSPECIFIED_HOST_VALUE
@@ -4051,18 +4110,18 @@ const sendDailyReport = useCallback((dateParam) => {
   const staffDriverMatches = useMemo(() => {
     const query = upperTr(formData.driver || '').trim();
     if (!query) return [];
-    return STAFF_LIST.filter((p) => p.includes(query)).slice(0, 80);
-  }, [formData.driver]);
+    return staffNames.filter((p) => p.includes(query)).slice(0, 80);
+  }, [formData.driver, staffNames]);
   const staffVisitorMatches = useMemo(() => {
     const query = upperTr(formData.name || '').trim();
     if (!query) return [];
-    return STAFF_LIST.filter((p) => p.includes(query)).slice(0, 80);
-  }, [formData.name]);
+    return staffNames.filter((p) => p.includes(query)).slice(0, 80);
+  }, [formData.name, staffNames]);
   const hostStaffMatches = useMemo(() => {
     const query = upperTr(hostSearchTerm || '').trim();
     if (!query) return [];
-    return STAFF_LIST.filter((p) => p.includes(query)).slice(0, 80);
-  }, [hostSearchTerm]);
+    return staffNames.filter((p) => p.includes(query)).slice(0, 80);
+  }, [hostSearchTerm, staffNames]);
 
   const getStatusBadge = (status) => {
     if (status === 'ok') return { label: 'OK', className: 'bg-green-500/20 text-green-400' };
@@ -4220,6 +4279,8 @@ const sendDailyReport = useCallback((dateParam) => {
 
   // === DASHBOARD ===
   if (currentPage === 'dashboard') {
+    const clockStr = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const dateStr = now.toLocaleDateString('tr-TR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
     return (
       <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
         <header className="ui-header mb-4">
@@ -4239,7 +4300,12 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex items-center gap-3">
+            <div className="text-right hidden sm:block">
+              <div className="text-base font-mono font-semibold text-foreground tabular-nums">{clockStr}</div>
+              <div className="text-[10px] text-zinc-500">{dateStr}</div>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
             <button onClick={handleSystemReset} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Sistemi yenile">
               <RefreshCw size={14} />
             </button>
@@ -4284,6 +4350,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 <LogOut size={14} /> Kapat
               </Button>
             )}
+            </div>
           </div>
         </header>
 
@@ -5394,6 +5461,7 @@ const sendDailyReport = useCallback((dateParam) => {
             <Button onClick={() => setHrTab('assignments')} variant={hrTab === 'assignments' ? 'primary' : 'secondary'} size="sm">Vardiya Atamaları</Button>
             <Button onClick={() => setHrTab('attendance')} variant={hrTab === 'attendance' ? 'primary' : 'secondary'} size="sm">Puantaj Özeti</Button>
             <Button onClick={() => setHrTab('payroll')} variant={hrTab === 'payroll' ? 'primary' : 'secondary'} size="sm">Bordro / SGK</Button>
+            <Button onClick={() => setHrTab('access-events')} variant={hrTab === 'access-events' ? 'primary' : 'secondary'} size="sm">Erişim Geçmişi</Button>
           </div>
 
           {hrError && (
@@ -6350,6 +6418,108 @@ const sendDailyReport = useCallback((dateParam) => {
               </Card>
             </div>
           )}
+
+          {hrTab === 'access-events' && (
+            <div className="space-y-4">
+              <Card className="p-4">
+                <h3 className="text-sm font-semibold text-foreground mb-3">Filtrele</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Personel</label>
+                    <select
+                      className="ui-input w-full text-sm"
+                      value={accessEventQuery.person_id}
+                      onChange={(e) => setAccessEventQuery((prev) => ({ ...prev, person_id: e.target.value }))}
+                    >
+                      <option value="">Tümü</option>
+                      {people.filter((p) => p.is_active !== false).map((p) => (
+                        <option key={p.id} value={p.id}>{p.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Yön</label>
+                    <select
+                      className="ui-input w-full text-sm"
+                      value={accessEventQuery.direction}
+                      onChange={(e) => setAccessEventQuery((prev) => ({ ...prev, direction: e.target.value }))}
+                    >
+                      <option value="">Tümü</option>
+                      <option value="IN">Giriş (IN)</option>
+                      <option value="OUT">Çıkış (OUT)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Tarih (Başlangıç)</label>
+                    <input
+                      type="date"
+                      className="ui-input w-full text-sm"
+                      value={accessEventQuery.date_from}
+                      onChange={(e) => setAccessEventQuery((prev) => ({ ...prev, date_from: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Tarih (Bitiş)</label>
+                    <input
+                      type="date"
+                      className="ui-input w-full text-sm"
+                      value={accessEventQuery.date_to}
+                      onChange={(e) => setAccessEventQuery((prev) => ({ ...prev, date_to: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" onClick={() => loadAccessEvents(accessEventQuery)}>Sorgula</Button>
+                  <Button size="sm" variant="secondary" onClick={() => {
+                    const reset = { person_id: '', direction: '', date_from: '', date_to: '' };
+                    setAccessEventQuery(reset);
+                    loadAccessEvents(reset);
+                  }}>Temizle</Button>
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <h3 className="text-sm font-semibold text-foreground mb-3">
+                  Erişim Geçmişi{accessEvents.length > 0 ? ` (${accessEvents.length})` : ''}
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left p-3 text-xs text-muted-foreground font-medium">Personel</th>
+                        <th className="text-left p-3 text-xs text-muted-foreground font-medium">Badge</th>
+                        <th className="text-left p-3 text-xs text-muted-foreground font-medium">Yön</th>
+                        <th className="text-left p-3 text-xs text-muted-foreground font-medium">Site / Kapı</th>
+                        <th className="text-left p-3 text-xs text-muted-foreground font-medium">Tarih / Saat</th>
+                        <th className="text-left p-3 text-xs text-muted-foreground font-medium">Not</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accessEvents.map((ev) => (
+                        <tr key={ev.id} className="border-b border-border/50 hover:bg-muted/30">
+                          <td className="p-3 text-xs">{ev.person?.full_name || ev.person_id || '—'}</td>
+                          <td className="p-3 text-xs font-mono">{ev.badge?.code || '—'}</td>
+                          <td className="p-3 text-xs">
+                            <span className={`ui-pill ${ev.direction === 'IN' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                              {ev.direction === 'IN' ? 'Giriş' : 'Çıkış'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-xs">{ev.site?.name || '—'} / {ev.gate?.name || '—'}</td>
+                          <td className="p-3 text-xs whitespace-nowrap">
+                            {ev.created_at ? new Date(ev.created_at).toLocaleString('tr-TR') : '—'}
+                          </td>
+                          <td className="p-3 text-xs text-muted-foreground">{ev.note || '—'}</td>
+                        </tr>
+                      ))}
+                      {accessEvents.length === 0 && (
+                        <tr><td colSpan={6} className="ui-empty">Kayıt bulunamadı.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
         </main>
       </div>
     );
@@ -6424,6 +6594,10 @@ const sendDailyReport = useCallback((dateParam) => {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <div className="text-right hidden sm:block">
+            <div className="text-base font-mono font-semibold text-foreground tabular-nums">{now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
+            <div className="text-[10px] text-zinc-500">{now.toLocaleDateString('tr-TR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
+          </div>
           <div className="ui-chip">
             <Layers size={14} className="text-blue-400" />
             <div className="flex flex-col">
