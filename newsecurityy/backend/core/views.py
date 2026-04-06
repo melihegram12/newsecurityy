@@ -91,8 +91,9 @@ def _extract_role_codes(user):
     )
 
 
-def _auth_payload(user, active_role=''):
-    roles = _extract_role_codes(user)
+def _auth_payload(user, active_role='', roles=None):
+    if roles is None:
+        roles = _extract_role_codes(user)
     resolved_active_role = active_role or (roles[0] if roles else '')
     return {
         'id': user.id,
@@ -346,7 +347,7 @@ class AuthLoginView(APIView):
             )
 
         refresh = RefreshToken.for_user(user)
-        payload = _auth_payload(user, requested_role)
+        payload = _auth_payload(user, requested_role, roles=user_roles)
         _audit(request, 'auth.login', 'user', user.id, f'role={requested_role}')
         return Response(
             {
@@ -374,7 +375,7 @@ class AuthMeView(APIView):
             return Response({'detail': 'Bu rol ile erişim yetkiniz yok.'}, status=status.HTTP_403_FORBIDDEN)
 
         active_role = requested_role or (roles[0] if roles else '')
-        return Response(_auth_payload(user, active_role), status=status.HTTP_200_OK)
+        return Response(_auth_payload(user, active_role, roles=roles), status=status.HTTP_200_OK)
 
 
 class AuditLogListView(APIView):
@@ -918,6 +919,7 @@ class AbsenceRecordListCreateView(generics.ListCreateAPIView):
     serializer_class = AbsenceRecordSerializer
 
     def get_queryset(self):
+        _require_role(self.request.user, [ROLE_HR, ROLE_MANAGER, ROLE_ADMIN, ROLE_DEVELOPER])
         qs = AbsenceRecord.objects.select_related('person', 'absence_type').all()
         person_id = self.request.query_params.get('person_id')
         type_id = self.request.query_params.get('absence_type_id')
@@ -1274,6 +1276,7 @@ class PayrollProfileListCreateView(generics.ListCreateAPIView):
     serializer_class = PayrollProfileSerializer
 
     def get_queryset(self):
+        _require_role(self.request.user, [ROLE_HR, ROLE_ADMIN, ROLE_ACCOUNTING, ROLE_DEVELOPER])
         qs = PayrollProfile.objects.select_related('person').all()
         person_id = self.request.query_params.get('person_id')
         if person_id:
@@ -1479,3 +1482,46 @@ class SGKReportView(APIView):
                 'records': details,
             }
         )
+
+
+class AccessEventListView(generics.ListAPIView):
+    """
+    GET /api/access-events
+    Query params: person_id, direction (IN|OUT), date_from (YYYY-MM-DD),
+                  date_to (YYYY-MM-DD), site_id, gate_id
+    """
+    serializer_class = AccessEventSerializer
+
+    def get_queryset(self):
+        _require_role(
+            self.request.user,
+            [ROLE_SECURITY, ROLE_HR, ROLE_MANAGER, ROLE_ADMIN, ROLE_DEVELOPER],
+        )
+        qs = AccessEvent.objects.select_related('person', 'badge', 'site', 'gate', 'device').order_by('-created_at')
+
+        params = self.request.query_params
+        person_id = params.get('person_id')
+        direction = params.get('direction')
+        date_from = params.get('date_from')
+        date_to = params.get('date_to')
+        site_id = params.get('site_id')
+        gate_id = params.get('gate_id')
+
+        if person_id:
+            qs = qs.filter(person_id=person_id)
+        if direction:
+            qs = qs.filter(direction=direction.upper())
+        if date_from:
+            parsed = parse_date(date_from)
+            if parsed:
+                qs = qs.filter(created_at__date__gte=parsed)
+        if date_to:
+            parsed = parse_date(date_to)
+            if parsed:
+                qs = qs.filter(created_at__date__lte=parsed)
+        if site_id:
+            qs = qs.filter(site_id=site_id)
+        if gate_id:
+            qs = qs.filter(gate_id=gate_id)
+
+        return qs

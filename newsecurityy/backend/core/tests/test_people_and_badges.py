@@ -29,8 +29,9 @@ class PersonAndBadgeApiTests(APITestCase):
 
         list_res = self.client.get('/api/persons?kind=employee')
         self.assertEqual(list_res.status_code, 200, list_res.data)
-        self.assertEqual(len(list_res.data), 1)
-        self.assertEqual(list_res.data[0]['full_name'], 'Ayse Yilmaz')
+        results = list_res.data.get('results', list_res.data)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['full_name'], 'Ayse Yilmaz')
 
     def test_create_and_list_badges(self):
         person = Person.objects.create(kind=Person.Kind.EMPLOYEE, full_name='Mehmet Demir')
@@ -50,8 +51,9 @@ class PersonAndBadgeApiTests(APITestCase):
 
         list_res = self.client.get('/api/badges?q=CARD-0001')
         self.assertEqual(list_res.status_code, 200, list_res.data)
-        self.assertEqual(len(list_res.data), 1)
-        self.assertEqual(list_res.data[0]['code'], 'CARD-0001')
+        results = list_res.data.get('results', list_res.data)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['code'], 'CARD-0001')
 
     def test_update_person_and_badge(self):
         person = Person.objects.create(kind=Person.Kind.EMPLOYEE, full_name='Zeynep Kaya', is_active=True)

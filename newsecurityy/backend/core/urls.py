@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    AccessEventListView,
     AbsenceRecordDetailView,
     AbsenceRecordListCreateView,
     AbsenceRecordCancelView,
@@ -69,4 +70,5 @@ urlpatterns = [
     path('payroll/profiles/<uuid:pk>', PayrollProfileDetailView.as_view(), name='payroll_profile_detail'),
     path('payroll/summary', PayrollSummaryView.as_view(), name='payroll_summary'),
     path('sgk/report', SGKReportView.as_view(), name='sgk_report'),
+    path('access-events', AccessEventListView.as_view(), name='access_event_list'),
 ]
