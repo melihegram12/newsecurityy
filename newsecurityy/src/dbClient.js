@@ -385,6 +385,29 @@ function addToLocalSyncQueue(action, data, localId = null) {
     }
 }
 
+// =============================================================================
+// DUAL-WRITE DAVRANIŞI — OKUMADAN DOKUNMA (2026-04-06)
+// =============================================================================
+// syncToSupabase ve syncToLocalApi her yazma işlemi sonrası ayrı ayrı çağrılır.
+// Her fonksiyonun kendi retry queue'u vardır (syncQueue / localSyncQueue).
+//
+// ASIMETRI — BİLİNEN RİSK:
+//   Supabase başarısız → syncQueue'e eklenir → processSupabaseSyncQueue retry eder ✓
+//   LocalApi başarısız → addToLocalSyncQueue'e eklenir → processLocalSyncQueue retry eder ✓
+//   ANCAK: İki queue bağımsız işlenir. Bir taraf başarılı, diğer taraf kalıcı
+//   hata verirse (örn. Django kapalı, 5 retry sonrası drop) veri iki backend'de
+//   farklı durumda kalır.
+//
+// MEVCUT KORUNMA:
+//   Supabase primary store — UI daima Supabase'den okur → operasyonel kayıp yok.
+//   Django offline iken kaçırılan kayıtlar POST /api/logs/sync (LogSyncView)
+//   ile batch olarak telafi edilebilir.
+//
+// KALICI ÇÖZÜM (ertelendi):
+//   Her iki queue'u tek bir DualWriteQueue altında birleştir.
+//   Bir taraf başarısız olduğunda diğeri de retry'a girsin.
+// =============================================================================
+
 // Supabase'e senkronize et (arka planda)
 async function syncToSupabase(action, data, localId = null, options = {}) {
     if (!shouldSyncToSupabase()) {
