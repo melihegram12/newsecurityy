@@ -4,13 +4,22 @@ import { styles as _tokenStyles } from './tokens';
 // --- CLASSNAME BİRLEŞTİRİCİ ---
 export const cx = (...classes) => classes.filter(Boolean).join(' ');
 
+// --- PAGINATION YARDIMCISI ---
+// DRF LimitOffsetPagination: { count, results: [...] } veya düz array döner
+export const extractPagedList = (data) =>
+  Array.isArray(data) ? data : (Array.isArray(data?.results) ? data.results : []);
+
 // --- GÜVENLİK: INPUT SANİTİZASYON FONKSİYONU (XSS Koruması) ---
 export const sanitizeInput = (input) => {
   if (typeof input !== 'string') return '';
   return input
-    .replace(/[<>]/g, '')
-    .replace(/javascript:/gi, '')
-    .replace(/on\w+=/gi, '')
+    .replace(/[<>'"]/g, '')
+    .replace(/javascript\s*:/gi, '')
+    .replace(/vbscript\s*:/gi, '')
+    .replace(/data\s*:/gi, '')
+    .replace(/expression\s*\(/gi, '')
+    .replace(/on\w+\s*=/gi, '')
+    .replace(/&#/g, '')
     .trim()
     .slice(0, 500);
 };

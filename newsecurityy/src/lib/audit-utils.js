@@ -17,8 +17,8 @@ export const verifyAuditChain = (logs = []) => {
     if (item.hash && item.hash !== expectedHash) {
       return { ok: false, brokenIndex: i };
     }
-    if (i < logs.length - 1) {
-      const prev = logs[i + 1] || {};
+    if (i > 0) {
+      const prev = logs[i - 1] || {};
       if (item.prev_hash && prev.hash && item.prev_hash !== prev.hash) {
         return { ok: false, brokenIndex: i };
       }
