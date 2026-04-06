@@ -32,3 +32,13 @@ supabase/.temp/
 # OS / IDE
 .vscode/
 .DS_Store
+
+# One-off repair/migration scripts (not part of codebase)
+add_missing_logs_from_history.py
+migration_script.sql
+netfliy/
+yeni.csv
+yeni.csv.*
+
+# Runtime databases
+*.db

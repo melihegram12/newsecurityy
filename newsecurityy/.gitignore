@@ -75,3 +75,9 @@ yeni.csv*
 # Old project folders
 /it-envanter-sistemi-main
 /sec
+
+# Temp runtime databases
+tmp-security_panel.db
+*.db
+
+# One-off migration/repair scripts are ignored at repo root level
