@@ -105,3 +105,16 @@ test('webDB rejects reverse chronology on update', async () => {
   const all = await webDB.getAllLogs();
   expect(all[0].exit_at).toBeFalsy();
 });
+
+test('webDB insertLog surfaces a clear error when localStorage writes are blocked', async () => {
+  const setItemSpy = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new Error('quota exceeded');
+  });
+
+  await expect(webDB.insertLog({
+    type: 'vehicle',
+    plate: '34 FAIL 34',
+  })).rejects.toThrow('Yerel depolama kullanılamıyor');
+
+  setItemSpy.mockRestore();
+});

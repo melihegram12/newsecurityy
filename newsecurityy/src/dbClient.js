@@ -155,6 +155,24 @@ function writeLocalSyncStatus(patch) {
     }
 }
 
+function safeLocalStorageGet(key, fallback = null) {
+    try {
+        const value = localStorage.getItem(key);
+        return value === null ? fallback : value;
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function safeLocalStorageSet(key, value) {
+    try {
+        localStorage.setItem(key, value);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 function updateQueueCount() {
     try {
         const queue = JSON.parse(localStorage.getItem(SYNC_QUEUE_KEY) || '[]');
@@ -1351,14 +1369,16 @@ const webDB = {
 
     _getLogs() {
         try {
-            return JSON.parse(localStorage.getItem(this.LOGS_KEY) || '[]');
+            return JSON.parse(safeLocalStorageGet(this.LOGS_KEY, '[]') || '[]');
         } catch {
             return [];
         }
     },
 
     _saveLogs(logs) {
-        localStorage.setItem(this.LOGS_KEY, JSON.stringify(logs));
+        if (!safeLocalStorageSet(this.LOGS_KEY, JSON.stringify(logs))) {
+            throw new Error('Yerel depolama kullanılamıyor. Tarayıcı depolama iznini kontrol edin.');
+        }
     },
 
     async getActiveLogs() {
@@ -1513,13 +1533,15 @@ const webDB = {
     },
 
     async setSetting(key, value) {
-        const settings = JSON.parse(localStorage.getItem(this.SETTINGS_KEY) || '{}');
+        const settings = JSON.parse(safeLocalStorageGet(this.SETTINGS_KEY, '{}') || '{}');
         settings[key] = value;
-        localStorage.setItem(this.SETTINGS_KEY, JSON.stringify(settings));
+        if (!safeLocalStorageSet(this.SETTINGS_KEY, JSON.stringify(settings))) {
+            throw new Error('Ayarlar kaydedilemedi. Tarayıcı depolama iznini kontrol edin.');
+        }
     },
 
     async getSetting(key) {
-        const settings = JSON.parse(localStorage.getItem(this.SETTINGS_KEY) || '{}');
+        const settings = JSON.parse(safeLocalStorageGet(this.SETTINGS_KEY, '{}') || '{}');
         return settings[key] || null;
     }
 };

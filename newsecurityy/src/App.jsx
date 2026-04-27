@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Car, User, FileText, CheckCircle, Clock, LogOut, Search,
-  Edit, X, Wifi, WifiOff, LogIn, MapPin, Lock, Briefcase, Layers, RefreshCw, UserMinus, UserCheck, AlertTriangle, Crown, Bus,
+  Edit, X, Wifi, WifiOff, LogIn, MapPin, Lock, Briefcase, Layers, RefreshCw, UserMinus, UserCheck, AlertTriangle, Crown,
   Trash2, BarChart3, Calendar, Filter, Phone, TrendingUp, Users, Activity, PieChart, History, Timer, AlertCircle, ArrowRightCircle, ArrowLeftCircle,
   CalendarClock, Mail, Volume2, VolumeX, Zap, Star, Send, RotateCcw, Folder, Upload
 } from 'lucide-react';
@@ -33,9 +33,19 @@ import {
   needsPlainCsvFallback, parseCsvTextLoose, pickSupabaseCompatibleLog, extractPagedList,
 } from './lib/utils';
 import { buildAuditHash, verifyAuditChain } from './lib/audit-utils';
-import { buildExitOptionLabel, getExitCandidates, resolveExitRecord } from './lib/exit-utils';
+import {
+  buildExitOptionLabel,
+  getExitCandidates,
+  matchesVehicleSubCategory,
+  resolveExitRecord,
+  shouldAskVehicleEntryLocation,
+  shouldAskVehicleExitLocation,
+  SUB_TAB_TO_SUB_CATEGORY,
+} from './lib/exit-utils';
+import { buildIndependentExitConfirmation, resolveGuestExitUiState } from './lib/guest-exit-utils';
 import { withSingleFlight } from './lib/async-guards';
 import { getLogBindingId, resolveOfflineSyncAction } from './lib/log-sync-utils';
+import { executeWithSupabaseColumnFallback } from './lib/supabase-write-utils';
 import {
   mapCsvRowToImportRecord,
   dedupeLogsByCreatedAt, upsertChunkWithRetry,
@@ -118,10 +128,38 @@ function buildFallbackVehiclePresets() {
   });
 }
 
+function safeStorageGet(key, fallback = null) {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    // ignore storage write failures
+  }
+}
+
+function safeStorageGetJson(key, fallback) {
+  const raw = safeStorageGet(key, null);
+  if (raw === null) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return fallback;
+  }
+}
+
 // === MAIN APP COMPONENT ===
 export default function App() {
   // --- STATE TANIMLARI ---
   const [session, setSession] = useState(null);
+  const [guestExitMode, setGuestExitMode] = useState(true);
   const [activeLogs, setActiveLogs] = useState([]);
   const [allLogs, setAllLogs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -129,6 +167,9 @@ export default function App() {
   const [notification, setNotification] = useState(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [now, setNow] = useState(() => new Date());
+  const [zoomLevel, setZoomLevel] = useState(() => {
+    try { return Number(localStorage.getItem('app_zoom_level')) || 100; } catch { return 100; }
+  });
   const [_supabaseDebug, setSupabaseDebug] = useState({ lastError: null, lastCheckedAt: null }); // eslint-disable-line no-unused-vars
   const [searchTerm, setSearchTerm] = useState('');
   const [activeSearchTerm, setActiveSearchTerm] = useState('');
@@ -162,19 +203,14 @@ export default function App() {
   });
   const [liteMode, setLiteMode] = useState(() => {
     if (FORCE_LITE_MODE) return true;
-    const manualOverride = localStorage.getItem(LITE_MODE_OVERRIDE_KEY);
+    const manualOverride = safeStorageGet(LITE_MODE_OVERRIDE_KEY, null);
     if (manualOverride !== null) return manualOverride === '1';
-    const savedRole = localStorage.getItem(ACTIVE_ROLE_KEY);
+    const savedRole = safeStorageGet(ACTIVE_ROLE_KEY, null);
     if (savedRole === ROLE_SECURITY) return true;
-    return localStorage.getItem(LITE_MODE_KEY) === '1';
+    return safeStorageGet(LITE_MODE_KEY, '0') === '1';
   });
   const [featureFlags, setFeatureFlags] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(FEATURE_FLAGS_KEY) || '{}');
-      return normalizeFeatureFlags(saved);
-    } catch (e) {
-      return normalizeFeatureFlags();
-    }
+    return normalizeFeatureFlags(safeStorageGetJson(FEATURE_FLAGS_KEY, {}));
   });
   const optionalAttachmentsEnabled = !!featureFlags.optionalAttachments;
   const advancedReportEnabled = !!featureFlags.advancedReport;
@@ -217,7 +253,7 @@ export default function App() {
   const [localApiAuthUser, setLocalApiAuthUser] = useState('');
   const [localApiAuthPass, setLocalApiAuthPass] = useState('');
   const [localApiAuthLoading, setLocalApiAuthLoading] = useState(false);
-  const [authRole, setAuthRole] = useState(() => localStorage.getItem(ACTIVE_ROLE_KEY) || ROLE_SECURITY);
+  const [authRole, setAuthRole] = useState(() => safeStorageGet(ACTIVE_ROLE_KEY, ROLE_SECURITY) || ROLE_SECURITY);
   const [authLoading, setAuthLoading] = useState(false);
   const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
   const [serverPingLoading, setServerPingLoading] = useState(false);
@@ -474,13 +510,32 @@ export default function App() {
   const [vehicleSubTab, setVehicleSubTab] = useState('guest');
   const [visitorSubTab, setVisitorSubTab] = useState('guest');
   const [formData, setFormData] = useState({ plate: '', driver: '', driver_type: 'owner', name: '', host: '', note: '', entry_location: '', exit_location: '', seal_number_entry: '', seal_number_exit: '', tc_no: '', phone: '' });
+  const shouldShowVehicleExitLocation = shouldAskVehicleExitLocation({
+    mainTab,
+    isExitDirection,
+    vehicleSubTab,
+    driverType: formData.driver_type,
+  });
+  const shouldShowVehicleEntryLocation = shouldAskVehicleEntryLocation({
+    mainTab,
+    isEntryDirection,
+    vehicleSubTab,
+    driverType: formData.driver_type,
+  });
+  const guestExitState = useMemo(() => resolveGuestExitUiState({
+    session,
+    guestExitMode,
+    currentPage,
+    mainTab,
+    vehicleDirection,
+  }), [session, guestExitMode, currentPage, mainTab, vehicleDirection]);
   const [selectedExitLogId, setSelectedExitLogId] = useState('');
   const [editingLog, setEditingLog] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [_loginError, setLoginError] = useState(null); // eslint-disable-line no-unused-vars
-  const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('soundEnabled') !== 'false');
+  const [soundEnabled, setSoundEnabled] = useState(() => safeStorageGet('soundEnabled', 'true') !== 'false');
   const [sendingReport, setSendingReport] = useState(false);
   const [reportDateFrom, setReportDateFrom] = useState('');
   const [showReportModal, setShowReportModal] = useState(false);
@@ -498,6 +553,7 @@ export default function App() {
   const queuedFetchRef = useRef(false);
   const exitInFlightIdsRef = useRef(new Set());
   const entryInFlightRef = useRef(new Set());
+  const independentExitConfirmRef = useRef('');
 
   // Debounced values
   const debouncedActiveSearchTerm = useDebounce(activeSearchTerm, 300);
@@ -516,7 +572,7 @@ export default function App() {
     return '';
   }, [updateUrl]);
 
-  const exitCandidates = useMemo(() => getExitCandidates(activeLogs, mainTab), [activeLogs, mainTab]);
+  const exitCandidates = useMemo(() => getExitCandidates(activeLogs, mainTab, vehicleSubTab), [activeLogs, mainTab, vehicleSubTab]);
   const selectedExitLog = useMemo(
     () => exitCandidates.find((log) => (
       getLogBindingId(log) === String(selectedExitLogId)
@@ -543,6 +599,27 @@ export default function App() {
       setSelectedExitLogId(getLogBindingId(exitCandidates[0]) || String(exitCandidates[0].id || ''));
     }
   }, [isExitDirection, selectedExitLogId, exitCandidates]);
+
+  useEffect(() => {
+    if (vehicleSubTab !== 'service') return;
+    setVehicleSubTab('guest');
+    setFormData(prev => ({
+      ...prev,
+      driver_type: 'other',
+      entry_location: '',
+      exit_location: '',
+    }));
+  }, [vehicleSubTab]);
+
+  useEffect(() => {
+    if (shouldShowVehicleEntryLocation) return;
+    setFormData(prev => prev.entry_location ? { ...prev, entry_location: '' } : prev);
+  }, [shouldShowVehicleEntryLocation]);
+
+  useEffect(() => {
+    if (shouldShowVehicleExitLocation) return;
+    setFormData(prev => prev.exit_location ? { ...prev, exit_location: '' } : prev);
+  }, [shouldShowVehicleExitLocation]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -970,8 +1047,21 @@ export default function App() {
   const handleRoleLogout = useCallback(() => {
     appendActionLog('auth.logout', 'Kullanici cikis yapti');
     setSession(null);
+    independentExitConfirmRef.current = '';
+    setGuestExitMode(true);
     setLocalApiToken('');
-    setCurrentPage('dashboard');
+    setCurrentPage('main');
+    setMainTab('vehicle');
+    setVehicleDirection(DIRECTION_EXIT);
+    setSelectedExitLogId('');
+    setPlateHistory(null);
+    setShowManagementList(false);
+    setShowStaffList(false);
+    setShowHostStaffList(false);
+    setHostSearchTerm('');
+    setIsCustomHost(false);
+    setFormData({ plate: '', driver: '', driver_type: 'owner', name: '', host: '', note: '', entry_location: '', exit_location: '', seal_number_entry: '', seal_number_exit: '', tc_no: '', phone: '' });
+    clearEntryAttachments();
     try {
       localStorage.removeItem(LOCAL_API_TOKEN_KEY);
       localStorage.removeItem(LOCAL_ROLE_SESSION_KEY);
@@ -981,7 +1071,40 @@ export default function App() {
       // ignore
     }
     showToast('Cikis yapildi.', 'info');
-  }, [appendActionLog, showToast]);
+  }, [appendActionLog, clearEntryAttachments, showToast]);
+
+  const openGuestExitMode = useCallback(() => {
+    independentExitConfirmRef.current = '';
+    setGuestExitMode(true);
+    setCurrentPage('main');
+    setMainTab('vehicle');
+    setVehicleDirection(DIRECTION_EXIT);
+    setSelectedExitLogId('');
+    setPlateHistory(null);
+    setShowManagementList(false);
+    setShowStaffList(false);
+    setShowHostStaffList(false);
+    setHostSearchTerm('');
+    setIsCustomHost(false);
+    setFormData({ plate: '', driver: '', driver_type: 'owner', name: '', host: '', note: '', entry_location: '', exit_location: '', seal_number_entry: '', seal_number_exit: '', tc_no: '', phone: '' });
+    clearEntryAttachments();
+    showToast('Girişsiz araç çıkışı modu açıldı.', 'info');
+  }, [clearEntryAttachments, showToast]);
+
+  const closeGuestExitMode = useCallback(() => {
+    independentExitConfirmRef.current = '';
+    setGuestExitMode(false);
+    setCurrentPage('dashboard');
+    setSelectedExitLogId('');
+    setPlateHistory(null);
+    setShowManagementList(false);
+    setShowStaffList(false);
+    setShowHostStaffList(false);
+    setHostSearchTerm('');
+    setIsCustomHost(false);
+    setFormData({ plate: '', driver: '', driver_type: 'owner', name: '', host: '', note: '', entry_location: '', exit_location: '', seal_number_entry: '', seal_number_exit: '', tc_no: '', phone: '' });
+    clearEntryAttachments();
+  }, [clearEntryAttachments]);
 
   const loadServerAuditLogs = useCallback(async () => {
     if (!isDeveloperRole) return;
@@ -1400,7 +1523,7 @@ export default function App() {
   }, [checkPendingData, showToast, backupToLocalApi, canUseLocalApi]);
 
   const fetchData = useCallback(async () => {
-    if (!session) return;
+    if (!session && !guestExitState.active) return;
     if (fetchInFlightRef.current) {
       queuedFetchRef.current = true;
       return;
@@ -1440,7 +1563,7 @@ export default function App() {
         }, 0);
       }
     }
-  }, [session, isOnline, showToast, localDbFetchLimit, remoteFetchLimit, setLogsIfChanged]);
+  }, [session, guestExitState.active, isOnline, showToast, localDbFetchLimit, remoteFetchLimit, setLogsIfChanged]);
 
   const syncOfflineData = useCallback(async () => {
     try {
@@ -1474,29 +1597,42 @@ export default function App() {
 
               if (!error) {
                 if (Array.isArray(matchedRows) && matchedRows.length > 0) {
-                  const response = await supabase
-                    .from('security_logs')
-                    .update(insertPayload)
-                    .eq('created_at', createdAtMatch)
-                    .select('id, created_at');
+                  const updatePayload = { ...insertPayload };
+                  delete updatePayload.created_at;
+                  const response = await executeWithSupabaseColumnFallback(
+                    (payload) => supabase
+                      .from('security_logs')
+                      .update(payload)
+                      .eq('created_at', createdAtMatch)
+                      .select('id, created_at'),
+                    updatePayload,
+                  );
                   error = response?.error || null;
-                  matchedRows = response?.data || [];
+                  matchedRows = response?.skipped ? [{ skipped: true }] : (response?.data || []);
                 } else {
-                  const response = await supabase
-                    .from('security_logs')
-                    .insert([insertPayload])
-                    .select('id, created_at');
+                  const response = await executeWithSupabaseColumnFallback(
+                    (payload) => supabase
+                      .from('security_logs')
+                      .insert([payload])
+                      .select('id, created_at'),
+                    insertPayload,
+                  );
                   error = response?.error || null;
                   matchedRows = response?.data || [];
                 }
               }
             }
           } else if ((operation.action === 'UPDATE' || operation.action === 'EXIT') && operation.matchField && operation.matchValue && cleanData) {
-            let query = supabase.from('security_logs').update(pickSupabaseCompatibleLog(cleanData));
-            query = query.eq(operation.matchField, operation.matchValue);
-            const response = await query.select('id, created_at');
+            const response = await executeWithSupabaseColumnFallback(
+              (payload) => {
+                let query = supabase.from('security_logs').update(payload);
+                query = query.eq(operation.matchField, operation.matchValue);
+                return query.select('id, created_at');
+              },
+              pickSupabaseCompatibleLog(cleanData),
+            );
             error = response?.error || null;
-            matchedRows = response?.data || [];
+            matchedRows = response?.skipped ? [{ skipped: true }] : (response?.data || []);
           } else if (operation.action === 'DELETE' && operation.matchField && operation.matchValue) {
             let query = supabase.from('security_logs').delete();
             query = query.eq(operation.matchField, operation.matchValue);
@@ -1548,6 +1684,7 @@ export default function App() {
   const resetForm = useCallback(() => {
     setFormData({ plate: '', driver: '', driver_type: 'owner', name: '', host: '', note: '', entry_location: '', exit_location: '', seal_number_entry: '', seal_number_exit: '', tc_no: '', phone: '' });
     setSelectedExitLogId('');
+    independentExitConfirmRef.current = '';
     setPlateHistory(null);
     setShowManagementList(false);
     setShowStaffList(false);
@@ -1631,16 +1768,21 @@ export default function App() {
           return true;
         }
 
-        let query = supabase.from('security_logs').update(pickSupabaseCompatibleLog(updateData));
-        if (existingLog?.created_at) {
-          query = query.eq('created_at', existingLog.created_at);
-        } else if (localRecordId) {
-          query = query.eq('id', localRecordId);
-        } else {
-          throw new Error('Çıkış işlemi için uzak kayıt anahtarı bulunamadı.');
-        }
+        const { data: updatedRows, error } = await executeWithSupabaseColumnFallback(
+          (payload) => {
+            let query = supabase.from('security_logs').update(payload);
+            if (existingLog?.created_at) {
+              query = query.eq('created_at', existingLog.created_at);
+            } else if (localRecordId) {
+              query = query.eq('id', localRecordId);
+            } else {
+              throw new Error('Çıkış işlemi için uzak kayıt anahtarı bulunamadı.');
+            }
 
-        const { data: updatedRows, error } = await query.select('id, created_at').limit(1);
+            return query.select('id, created_at').limit(1);
+          },
+          pickSupabaseCompatibleLog(updateData),
+        );
         if (error) {
           throw new Error(`Çıkış işlemi kaydedilemedi: ${error.message}`);
         }
@@ -1670,16 +1812,38 @@ export default function App() {
     // Çıkış işlemi
     if (vehicleDirection === 'Çıkış') {
       const rawIdentifier = mainTab === 'vehicle' ? formData.plate : formData.name;
+      const normalizedExitIdentifier = sanitizeInput(rawIdentifier).toUpperCase();
+      const buildExitExtraData = (log) => {
+        const extraData = {};
+        const exitLocation = shouldShowVehicleExitLocation ? sanitizeInput(formData.exit_location) : '';
+        if (exitLocation) {
+          extraData.exit_location = exitLocation;
+          extraData.location = buildLegacyLocationValue(getEntryLocation(log), exitLocation);
+        }
+        if (mainTab === 'vehicle') {
+          if (vehicleSubTab === 'management' || vehicleSubTab === 'company') {
+            if (formData.driver_type !== 'owner' && formData.driver_type) {
+              const labels = { driver: 'Şoför', supervisor: 'Vardiya Amiri', manual: 'Manuel Giriş', other: 'Diğer' };
+              extraData.driver = `[${labels[formData.driver_type] || 'Diğer'}] ${sanitizeInput(formData.driver)}`;
+            } else {
+              extraData.driver = sanitizeInput(formData.driver);
+            }
+          }
+        }
+        return extraData;
+      };
       const exitLookup = resolveExitRecord({
         selectedExitLogId,
         activeLogs,
         allLogs,
         mainTab,
         rawIdentifier,
+        vehicleSubTab,
       });
       const existingLog = exitLookup.record;
 
       if (existingLog) {
+        independentExitConfirmRef.current = '';
         setSelectedExitLogId(getLogBindingId(existingLog) || String(existingLog.id || ''));
         if (existingLog.sub_category === 'Mühürlü Araç') {
           setExitingLogData(existingLog);
@@ -1688,23 +1852,7 @@ export default function App() {
           return;
         }
 
-        const extraData = {};
-        // Tüm çıkışlarda lokasyon bilgisini kaydet
-        if (formData.exit_location) {
-          extraData.exit_location = sanitizeInput(formData.exit_location);
-          extraData.location = buildLegacyLocationValue(getEntryLocation(existingLog), extraData.exit_location);
-        }
-        if (mainTab === 'vehicle') {
-          if (vehicleSubTab === 'management') {
-            if (formData.driver_type !== 'owner' && formData.driver_type) {
-              const labels = { driver: 'Şoför', supervisor: 'Vardiya Amiri', other: 'Diğer' };
-              extraData.driver = `[${labels[formData.driver_type] || 'Diğer'}] ${sanitizeInput(formData.driver)}`;
-            } else {
-              extraData.driver = sanitizeInput(formData.driver);
-            }
-          }
-        }
-
+        const extraData = buildExitExtraData(existingLog);
         const identifier = existingLog.plate || existingLog.name || rawIdentifier;
 
         setConfirmModal({
@@ -1721,26 +1869,90 @@ export default function App() {
         return;
       } else {
         if (exitLookup.reason === 'selected_not_found') {
+          independentExitConfirmRef.current = '';
           setSelectedExitLogId('');
           showToast("Seçilen aktif kayıt artık içeride görünmüyor. Listeyi yenileyip tekrar seçin.", "error");
           return;
         }
         if (exitLookup.reason === 'ambiguous') {
+          independentExitConfirmRef.current = '';
           showToast("Birden fazla aktif kayıt bulundu. Lütfen listeden doğru kaydı seçin.", "error");
           return;
         }
         if (exitLookup.reason === 'missing_input') {
+          independentExitConfirmRef.current = '';
           showToast("Çıkış için aktif kaydı seçin veya plaka/isim girin.", "error");
           return;
         }
-        showToast("HATA: Bu araç/kişi içeride görünmüyor! Önce giriş kaydı yapılmalı.", "error");
-        return;
+        // Local state'de bulunamadı — DB'ye taze sorgu at (Giriş modundaki kontrol gibi)
+        const expectedSubCategory = mainTab === 'vehicle' ? SUB_TAB_TO_SUB_CATEGORY[vehicleSubTab] : null;
+        try {
+          if (isElectron) {
+            const activeData = await dbClient.getActiveLogs();
+            const dbMatches = (activeData || []).filter(log => {
+              if (!matchesByTab(log, rawIdentifier, mainTab)) return false;
+              if (expectedSubCategory && !matchesVehicleSubCategory(log, vehicleSubTab)) return false;
+              return true;
+            });
+            if (dbMatches.length === 1) {
+              const dbRecord = dbMatches[0];
+              applyLocalLogUpsert(dbRecord, { includeInActive: true });
+              const didExit = await handleExit(getLogBindingId(dbRecord) || dbRecord.id, null, buildExitExtraData(dbRecord), dbRecord);
+              if (didExit) resetForm();
+              return;
+            }
+          } else {
+            const reallyOnline = await checkOnlineStatus();
+            if (reallyOnline) {
+              const col = mainTab === 'vehicle' ? 'plate' : 'name';
+              let dbQuery = supabase
+                .from('security_logs')
+                .select('*')
+                .is('exit_at', null)
+                .eq(col, rawIdentifier.toUpperCase());
+              if (expectedSubCategory) {
+                dbQuery = dbQuery.ilike('sub_category', `${expectedSubCategory}%`);
+              }
+              const { data: dbMatches } = await dbQuery;
+              if (dbMatches && dbMatches.length === 1) {
+                const dbRecord = dbMatches[0];
+                applyLocalLogUpsert(dbRecord, { includeInActive: true });
+                const didExit = await handleExit(getLogBindingId(dbRecord) || dbRecord.id, null, buildExitExtraData(dbRecord), dbRecord);
+                if (didExit) resetForm();
+                return;
+              }
+            }
+          }
+        } catch (_dbCheckErr) {
+          // DB kontrol hatası — yeni çıkış kaydı oluşturmaya devam et
+        }
+        const exitLocationKeyPart = shouldShowVehicleExitLocation ? sanitizeInput(formData.exit_location) : '';
+        const independentExitKey = `${mainTab}|${vehicleSubTab}|${visitorSubTab}|${normalizedExitIdentifier}|${exitLocationKeyPart}`;
+        if (independentExitConfirmRef.current !== independentExitKey) {
+          const confirmation = buildIndependentExitConfirmation(normalizedExitIdentifier || 'Bu araç');
+          setConfirmModal({
+            isOpen: true,
+            title: confirmation.title,
+            message: confirmation.message,
+            type: 'warning',
+            confirmLabel: 'Yine de Çıkış Yap',
+            cancelLabel: 'Vazgeç',
+            onConfirm: async () => {
+              setConfirmModal(prev => ({ ...prev, isOpen: false }));
+              independentExitConfirmRef.current = independentExitKey;
+              await handleEntry();
+            }
+          });
+          return;
+        }
+        independentExitConfirmRef.current = '';
+        // Aktif kayıt bulunamadı — giriş kaydı olmadan bağımsız çıkış kaydı oluşturulacak
       }
     }
 
     if (mainTab === 'vehicle' && !formData.plate) return showToast("Plaka giriniz!", "error");
     if (mainTab === 'visitor' && !formData.name) return showToast("İsim seçiniz/giriniz!", "error");
-    if ((vehicleSubTab === 'company' || vehicleSubTab === 'service') && vehicleDirection === 'Giriş' && !formData.entry_location) return showToast("Lokasyon giriniz!", "error");
+    if (vehicleSubTab === 'company' && vehicleDirection === 'Giriş' && !formData.entry_location) return showToast("Lokasyon giriniz!", "error");
     if ((vehicleSubTab === 'management' || vehicleSubTab === 'company') && vehicleDirection === 'Giriş' && formData.driver_type !== 'owner' && !formData.driver) return showToast("Aracı kullanan kişinin adını giriniz!", "error");
     // MÜHÜR NUMARASI ARTIK OPSİYONEL - Zorunlu değil!
     // if (vehicleSubTab === 'sealed' && vehicleDirection === 'Giriş' && !formData.seal_number_entry) return showToast("Giriş Mühür No giriniz!", "error");
@@ -1766,16 +1978,18 @@ export default function App() {
       if (existingLocalRecord) {
         setConfirmModal({
           isOpen: true,
-          title: '⚠️ Araç/Kişi Zaten İçeride!',
-          message: `${searchValue} aktif listede içeride görünüyor.\n\nBu kayıt geçmişten kalmış açık kayıt olabilir.\nÖnce çıkış yaptırılsın mı?`,
+          title: 'Araç/Kişi Zaten İçeride',
+          message: `${searchValue} aktif listede içeride görünüyor.\n\nÇıkış işlemi yapılsın mı?`,
           type: 'warning',
           confirmLabel: 'Çıkış Yaptır',
           cancelLabel: 'Vazgeç',
-          confirmVariant: 'destructive',
           onConfirm: async () => {
             setConfirmModal(prev => ({ ...prev, isOpen: false }));
             const didExit = await handleExit(getLogBindingId(existingLocalRecord) || existingLocalRecord.id, null, {}, existingLocalRecord);
-            if (didExit) showToast(`${searchValue} için açık kayıt kapatıldı. Girişi tekrar kaydedebilirsiniz.`, "info");
+            if (didExit) {
+              showToast(`${searchValue} çıkış yaptırıldı.`, "success");
+              resetForm();
+            }
           }
         });
         return;
@@ -1795,13 +2009,18 @@ export default function App() {
             }
             setConfirmModal({
               isOpen: true,
-              title: '⚠️ Araç/Kişi Zaten İçeride!',
-              message: `${searchValue} veritabanında içeride görünüyor!\n\nBu kayıt için çıkış işlemi yapmak ister misiniz?`,
+              title: 'Araç/Kişi Zaten İçeride',
+              message: `${searchValue} veritabanında içeride görünüyor.\n\nÇıkış işlemi yapılsın mı?`,
               type: 'warning',
+              confirmLabel: 'Çıkış Yaptır',
+              cancelLabel: 'Vazgeç',
               onConfirm: async () => {
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
                 const didExit = await handleExit(getLogBindingId(existingRecords[0]) || existingRecords[0].id, null, {}, existingRecords[0]);
-                if (didExit) showToast(`${searchValue} çıkış yaptırıldı.`, "success");
+                if (didExit) {
+                  showToast(`${searchValue} çıkış yaptırıldı.`, "success");
+                  resetForm();
+                }
               }
             });
             return;
@@ -1825,16 +2044,20 @@ export default function App() {
                 showToast("Uzak veritabanında aynı plaka/isim için birden fazla açık kayıt var. Doğru kaydı manuel seçip kapatın.", "error");
                 return;
               }
-              // Varolan kaydı çıkış yapmak isteyip istemediğini sor
               setConfirmModal({
                 isOpen: true,
-                title: '⚠️ Araç/Kişi Zaten İçeride!',
-                message: `${searchValue} veritabanında içeride görünüyor!\n\nBu kayıt için çıkış işlemi yapmak ister misiniz?`,
+                title: 'Araç/Kişi Zaten İçeride',
+                message: `${searchValue} veritabanında içeride görünüyor.\n\nÇıkış işlemi yapılsın mı?`,
                 type: 'warning',
+                confirmLabel: 'Çıkış Yaptır',
+                cancelLabel: 'Vazgeç',
                 onConfirm: async () => {
                   setConfirmModal(prev => ({ ...prev, isOpen: false }));
                   const didExit = await handleExit(getLogBindingId(existingRecords[0]) || existingRecords[0].id, null, {}, existingRecords[0]);
-                  if (didExit) showToast(`${searchValue} çıkış yaptırıldı.`, "success");
+                  if (didExit) {
+                    showToast(`${searchValue} çıkış yaptırıldı.`, "success");
+                    resetForm();
+                  }
                 }
               });
               return;
@@ -1860,11 +2083,11 @@ export default function App() {
 
     const isExitLog = vehicleDirection === 'Çıkış';
     const entryLocation = sanitizeInput(formData.entry_location);
-    const exitLocation = sanitizeInput(formData.exit_location);
+    const exitLocation = isExitLog && shouldShowVehicleExitLocation ? sanitizeInput(formData.exit_location) : '';
     let driverInfo = null;
     if (mainTab === 'vehicle') {
       if (formData.driver_type !== 'owner' && formData.driver_type) {
-        const labels = { driver: 'Şoför', supervisor: 'Vardiya Amiri', other: 'Diğer' };
+        const labels = { driver: 'Şoför', supervisor: 'Vardiya Amiri', manual: 'Manuel Giriş', other: 'Diğer' };
         driverInfo = `[${labels[formData.driver_type] || 'Diğer'}] ${sanitizeInput(formData.driver)}`;
       } else {
         driverInfo = sanitizeInput(formData.driver);
@@ -1920,7 +2143,10 @@ export default function App() {
           return;
         }
 
-        const { error } = await supabase.from('security_logs').insert([pickSupabaseCompatibleLog(newLog)]);
+        const { error } = await executeWithSupabaseColumnFallback(
+          (payload) => supabase.from('security_logs').insert([payload]),
+          pickSupabaseCompatibleLog(newLog),
+        );
         if (error) {
           saveToOfflineQueue(newLog);
           applyLocalLogUpsert(newLog, { includeInActive: !isExitLog });
@@ -1946,7 +2172,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }), [mainTab, vehicleSubTab, visitorSubTab, vehicleDirection, formData, selectedExitLogId, activeLogs, allLogs, currentShift, session, checkOnlineStatus, saveToOfflineQueue, resetForm, fetchData, showToast, handleExit, applyLocalLogUpsert, optionalAttachmentsEnabled, entryAttachments, addAttachmentsToLog]);
+  }), [mainTab, vehicleSubTab, visitorSubTab, vehicleDirection, formData, shouldShowVehicleExitLocation, selectedExitLogId, activeLogs, allLogs, currentShift, session, checkOnlineStatus, saveToOfflineQueue, resetForm, fetchData, showToast, handleExit, applyLocalLogUpsert, optionalAttachmentsEnabled, entryAttachments, addAttachmentsToLog]);
 
   const confirmSealedExit = useCallback(async () => {
     if (!exitSealNumber?.trim()) return showToast("Lütfen Çıkış Mühür Numarasını Giriniz!", "error");
@@ -2036,9 +2262,8 @@ export default function App() {
     if (chronologyIssue === 'invalid_timestamp') {
       return showToast('Giriş veya çıkış zamanı geçersiz.', 'error');
     }
-    if (chronologyIssue === 'exit_before_entry') {
-      return showToast('Çıkış saati giriş saatinden önce olamaz.', 'error');
-    }
+    // NOT: DIŞARIDA durumunda araç geçici çıkış yapıp geri döneceği için
+    // çıkış saati giriş saatinden önce olabilir — exit_before_entry engeli kaldırıldı.
 
     try {
       setActionLoading(editingLog.id || getLogBindingId(editingLog) || 'update');
@@ -2055,15 +2280,22 @@ export default function App() {
           setEditingLog(null);
           return;
         }
-        let query = supabase.from('security_logs').update(pickSupabaseCompatibleLog(updateData));
-        if (editingLog?.created_at) {
-          query = query.eq('created_at', editingLog.created_at);
-        } else if (editingLog?.id) {
-          query = query.eq('id', editingLog.id);
-        } else {
-          throw new Error('Güncellenecek kayıt için uzak eşleşme anahtarı bulunamadı.');
-        }
-        const { data: updatedRows, error } = await query.select('id, created_at');
+        const updatePayload = pickSupabaseCompatibleLog(updateData);
+        delete updatePayload.created_at;
+        const { data: updatedRows, error } = await executeWithSupabaseColumnFallback(
+          (payload) => {
+            let query = supabase.from('security_logs').update(payload);
+            if (editingLog?.created_at) {
+              query = query.eq('created_at', editingLog.created_at);
+            } else if (editingLog?.id) {
+              query = query.eq('id', editingLog.id);
+            } else {
+              throw new Error('Güncellenecek kayıt için uzak eşleşme anahtarı bulunamadı.');
+            }
+            return query.select('id, created_at');
+          },
+          updatePayload,
+        );
         if (!error && Array.isArray(updatedRows) && updatedRows.length > 0) { showToast("Güncellendi."); setEditingLog(null); fetchData(); }
         else if (!error) showToast("Güncelleme hatası: hedef kayıt bulunamadı.", "error");
         else showToast("Güncelleme hatası!", "error");
@@ -2130,13 +2362,18 @@ export default function App() {
             const reallyOnline = await checkOnlineStatus();
             setIsOnline(reallyOnline);
             if (!reallyOnline) { showToast("Çıkış işlemi için internet bağlantısı gerekir.", "error"); return; }
-            let query = supabase.from('security_logs').update(pickSupabaseCompatibleLog({ exit_at: new Date().toISOString() }));
-            if (log?.created_at) {
-              query = query.eq('created_at', log.created_at);
-            } else {
-              query = query.eq('id', log.id);
-            }
-            const { data: updatedRows, error } = await query.select('id, created_at').limit(1);
+            const { data: updatedRows, error } = await executeWithSupabaseColumnFallback(
+              (payload) => {
+                let query = supabase.from('security_logs').update(payload);
+                if (log?.created_at) {
+                  query = query.eq('created_at', log.created_at);
+                } else {
+                  query = query.eq('id', log.id);
+                }
+                return query.select('id, created_at').limit(1);
+              },
+              pickSupabaseCompatibleLog({ exit_at: new Date().toISOString() }),
+            );
             if (error) showToast(`Çıkış hatası: ${error.message}`, "error");
             else if (!Array.isArray(updatedRows) || updatedRows.length === 0) { showToast("Çıkış hatası: hedef kayıt bulunamadı.", "error"); }
             else { showToast(`✅ ${identifier} çıkış yaptı!`, "success"); fetchData(); }
@@ -2170,7 +2407,10 @@ export default function App() {
             fetchData();
           } else {
             // Web ortamında Supabase kullan
-            const { error } = await supabase.from('security_logs').insert([pickSupabaseCompatibleLog(newLog)]);
+            const { error } = await executeWithSupabaseColumnFallback(
+              (payload) => supabase.from('security_logs').insert([payload]),
+              pickSupabaseCompatibleLog(newLog),
+            );
             if (error) showToast("Hata: " + error.message, "error");
             else { showToast(`${normalizedPlate} girişi kaydedildi`, "success"); fetchData(); }
           }
@@ -2228,7 +2468,10 @@ export default function App() {
             fetchData();
           } else {
             // Web ortamında Supabase kullan
-            const { error } = await supabase.from('security_logs').insert([pickSupabaseCompatibleLog(newLog)]);
+            const { error } = await executeWithSupabaseColumnFallback(
+              (payload) => supabase.from('security_logs').insert([payload]),
+              pickSupabaseCompatibleLog(newLog),
+            );
             if (error) {
               showToast("Hata: " + error.message, "error");
             } else {
@@ -2832,7 +3075,7 @@ const sendDailyReport = useCallback((dateParam) => {
         setIsOnline(reallyOnline);
         if (reallyOnline) {
           showToast("İnternet bağlantısı sağlandı", "success");
-          const queue = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
+          const queue = JSON.parse(safeStorageGet(OFFLINE_QUEUE_KEY, '[]') || '[]');
           if (queue.length > 0) showToast(`${queue.length} bekleyen kayıt var. "Gönder" butonuna tıklayın.`, "info");
         }
       }
@@ -2863,6 +3106,25 @@ const sendDailyReport = useCallback((dateParam) => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // --- MOUSE ZOOM (Ctrl + Scroll) ---
+  useEffect(() => {
+    const handleWheel = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      setZoomLevel((prev) => {
+        const next = e.deltaY < 0 ? Math.min(prev + 10, 200) : Math.max(prev - 10, 50);
+        try { localStorage.setItem('app_zoom_level', String(next)); } catch {}
+        return next;
+      });
+    };
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.style.zoom = `${zoomLevel}%`;
+  }, [zoomLevel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2979,11 +3241,6 @@ const sendDailyReport = useCallback((dateParam) => {
       setIsCustomHost(false);
       setShowHostStaffList(false);
       setHostSearchTerm('');
-    } else if (mainTab === 'vehicle' && vehicleSubTab === 'service') {
-      setFormData(prev => ({ ...prev, host: 'Personel Servisi' }));
-      setIsCustomHost(false);
-      setShowHostStaffList(false);
-      setHostSearchTerm('');
     } else if (mainTab === 'visitor' && visitorSubTab === 'staff') {
       setFormData(prev => ({ ...prev, host: 'Fabrika' }));
       setIsCustomHost(false);
@@ -2997,6 +3254,13 @@ const sendDailyReport = useCallback((dateParam) => {
     const interval = setInterval(checkShift, 60000);
     return () => clearInterval(interval);
   }, [currentShift, getShiftByTime]);
+
+  useEffect(() => {
+    if (!guestExitState.active) return;
+    if (currentPage !== 'main') setCurrentPage('main');
+    if (mainTab !== 'vehicle') setMainTab('vehicle');
+    if (vehicleDirection !== DIRECTION_EXIT) setVehicleDirection(DIRECTION_EXIT);
+  }, [guestExitState.active, currentPage, mainTab, vehicleDirection]);
 
   useEffect(() => {
     fetchData();
@@ -3015,8 +3279,8 @@ const sendDailyReport = useCallback((dateParam) => {
     return () => window.removeEventListener('supabase-sync-done', onSyncRefresh);
   }, [fetchData]);
 
-  useEffect(() => { localStorage.setItem('soundEnabled', soundEnabled); }, [soundEnabled]);
-  useEffect(() => { localStorage.setItem(LITE_MODE_KEY, liteMode ? '1' : '0'); }, [liteMode]);
+  useEffect(() => { safeStorageSet('soundEnabled', soundEnabled); }, [soundEnabled]);
+  useEffect(() => { safeStorageSet(LITE_MODE_KEY, liteMode ? '1' : '0'); }, [liteMode]);
 
   // Auto-enable lite mode for security role when no manual override exists
   useEffect(() => {
@@ -3025,7 +3289,7 @@ const sendDailyReport = useCallback((dateParam) => {
       setLiteMode(true);
       return;
     }
-    const hasManualOverride = localStorage.getItem(LITE_MODE_OVERRIDE_KEY) !== null;
+    const hasManualOverride = safeStorageGet(LITE_MODE_OVERRIDE_KEY, null) !== null;
     if (hasManualOverride) return;
     if (activeRole === ROLE_SECURITY) {
       setLiteMode(true);
@@ -4136,7 +4400,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
   // --- RENDER ---
 
-  if (!session) {
+  if (guestExitState.showLogin) {
     return (
       <div className="min-h-screen app-shell app-container text-foreground font-sans p-4 flex items-center justify-center">
         <Card className="w-full max-w-xl p-6 md:p-8" style={{ borderTop: '2px solid hsl(217 91% 56% / 0.4)' }}>
@@ -4168,6 +4432,11 @@ const sendDailyReport = useCallback((dateParam) => {
             <Button onClick={handleRoleLogin} variant="primary" className="flex-1 gap-2" disabled={authLoading}>
               {authLoading ? <RefreshCw size={14} className="animate-spin" /> : <Lock size={14} />}
               {authLoading ? 'Giriş Yapılıyor...' : 'Giriş Yap'}
+            </Button>
+            <Button onClick={openGuestExitMode} aria-label="Uygulamaya Dön" variant="secondary" className="flex-1 gap-2" disabled={authLoading} style={{ fontSize: 0 }}>
+              <ArrowLeftCircle size={14} />
+              <span className="text-sm">Uygulamaya Dön</span>
+              Girişsiz Araç Çıkışı
             </Button>
           </div>
 
@@ -4278,7 +4547,7 @@ const sendDailyReport = useCallback((dateParam) => {
   }
 
   // === DASHBOARD ===
-  if (currentPage === 'dashboard') {
+  if (currentPage === 'dashboard' && !guestExitState.active) {
     const clockStr = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const dateStr = now.toLocaleDateString('tr-TR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
     return (
@@ -4290,13 +4559,9 @@ const sendDailyReport = useCallback((dateParam) => {
               <h1 className="text-base font-semibold tracking-tight">Malhotra Güvenlik Paneli</h1>
               <div className="flex items-center gap-2 text-[11px] text-zinc-400">
                 {isOnline ? <span className="text-emerald-400 flex items-center gap-1"><Wifi size={11} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={11} /> Offline</span>}
-                <span className="text-zinc-500">|</span>
-                <span>{session?.user?.email || 'local'}</span>
                 {totalQueueCount > 0 && (
                   <span className="ui-pill">Kuyruk: {totalQueueCount}</span>
                 )}
-                <span className="text-zinc-500">|</span>
-                <span className="text-zinc-500">v{BUILD_TIME}</span>
               </div>
             </div>
           </div>
@@ -4366,7 +4631,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
               </Button>
               <Button
-                onClick={() => setLiteMode((prev) => { const next = !prev; localStorage.setItem(LITE_MODE_OVERRIDE_KEY, next ? '1' : '0'); return next; })}
+                onClick={() => setLiteMode((prev) => { const next = !prev; safeStorageSet(LITE_MODE_OVERRIDE_KEY, next ? '1' : '0'); return next; })}
                 variant="ghost"
                 className={`gap-2 ${liteMode ? 'bg-amber-500/20 text-amber-200' : 'text-muted-foreground'}`}
                 title="Lite Mod: azaltilmis gorsel efekt, hizli islem odakli"
@@ -6583,13 +6848,14 @@ const sendDailyReport = useCallback((dateParam) => {
             <h1 className="text-base font-semibold tracking-tight">Malhotra Güvenlik Paneli</h1>
             <div className="flex items-center gap-2 text-[11px] text-zinc-400">
               {isOnline ? <span className="text-emerald-400 flex items-center gap-1"><Wifi size={11} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={11} /> Offline</span>}
-              <span className="text-zinc-500">|</span>
-              <span>{session?.user?.email || 'local'}</span>
               {totalQueueCount > 0 && (
                 <span className="ui-pill">Kuyruk: {totalQueueCount}</span>
               )}
-              <span className="text-zinc-500">|</span>
-              <span className="text-zinc-500">v{BUILD_TIME}</span>
+              {zoomLevel !== 100 && (
+                <>
+                  <button onClick={() => { setZoomLevel(100); try { localStorage.setItem('app_zoom_level', '100'); } catch {} }} className="text-yellow-400 hover:text-yellow-300 transition-colors" title="Zoom sıfırla">%{zoomLevel}</button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -6610,23 +6876,35 @@ const sendDailyReport = useCallback((dateParam) => {
         <div className="flex items-center gap-1.5">
           <button onClick={handleSystemReset} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Sistemi yenile"><RefreshCw size={14} /></button>
           <button onClick={recomputeActiveLogs} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Aktifleri yenile"><RotateCcw size={14} /></button>
-          <Button onClick={() => setCurrentPage('dashboard')} variant="secondary" size="sm" className="gap-1.5"><BarChart3 size={14} /> Dashboard</Button>
-          <Button onClick={() => setCurrentPage('import')} variant="secondary" size="sm" className="gap-1.5"><Upload size={14} /> Veri Yükle</Button>
+          {!guestExitState.active && (<Button onClick={() => setCurrentPage('dashboard')} variant="secondary" size="sm" className="gap-1.5"><BarChart3 size={14} /> Dashboard</Button>)}
+          {!guestExitState.active && (<Button onClick={() => setCurrentPage('import')} variant="secondary" size="sm" className="gap-1.5"><Upload size={14} /> Veri Yükle</Button>)}
+          {guestExitState.active && (<Button onClick={closeGuestExitMode} variant="secondary" size="sm" className="gap-1.5"><Lock size={14} /> Rol Girişi</Button>)}
           {isElectron && (
             <button onClick={handleAppExit} className="ui-btn-destructive px-2.5 py-1.5 text-xs gap-1"><LogOut size={14} /> Çıkış</button>
           )}
         </div>
       </header>
 
+      {guestExitState.active && (
+        <div className="ui-alert ui-alert-warning mb-4">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <AlertCircle size={16} />
+            <span>Girişsiz araç çıkışı modu açık. Sadece araç çıkışı yapılabilir.</span>
+          </div>
+        </div>
+      )}
+
       <main className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* SOL: GİRİŞ/ÇIKIŞ FORMU */}
         <section className="lg:col-span-5 ui-card p-4 h-fit">
           <div className="ui-segment mb-3">
-            <button onClick={() => setVehicleDirection('Giriş')} className={cx("ui-segment-btn flex items-center justify-center gap-1.5 whitespace-nowrap text-xs", vehicleDirection === 'Giriş' ? "ui-segment-success" : "ui-segment-inactive")}>
-              <ArrowRightCircle size={14} />
-              <span className="hidden sm:inline">GİRİŞ İŞLEMİ</span>
-              <span className="sm:hidden">GİRİŞ</span>
-            </button>
+            {!guestExitState.active && (
+              <button onClick={() => setVehicleDirection('Giriş')} className={cx("ui-segment-btn flex items-center justify-center gap-1.5 whitespace-nowrap text-xs", vehicleDirection === 'Giriş' ? "ui-segment-success" : "ui-segment-inactive")}>
+                <ArrowRightCircle size={14} />
+                <span className="hidden sm:inline">GİRİŞ İŞLEMİ</span>
+                <span className="sm:hidden">GİRİŞ</span>
+              </button>
+            )}
             <button onClick={() => setVehicleDirection('Çıkış')} className={cx("ui-segment-btn flex items-center justify-center gap-1.5 whitespace-nowrap text-xs", vehicleDirection === 'Çıkış' ? "ui-segment-danger" : "ui-segment-inactive")}>
               <ArrowLeftCircle size={14} />
               <span className="hidden sm:inline">ÇIKIŞ İŞLEMİ</span>
@@ -6636,18 +6914,19 @@ const sendDailyReport = useCallback((dateParam) => {
 
           <div className="ui-segment mb-4">
             <button onClick={() => { setMainTab('vehicle'); setFormData(prev => ({ ...prev, name: '', tc_no: '', phone: '' })); setShowStaffList(false); setShowHostStaffList(false); }} className={cx("ui-segment-btn text-xs", mainTab === 'vehicle' ? "ui-segment-active" : "ui-segment-inactive")}>ARAÇ</button>
-            <button onClick={() => { setMainTab('visitor'); setFormData(prev => ({ ...prev, plate: '', driver: '', driver_type: 'other', seal_number_entry: '', seal_number_exit: '' })); setShowManagementList(false); }} className={cx("ui-segment-btn whitespace-nowrap text-xs", mainTab === 'visitor' ? "ui-segment-active" : "ui-segment-inactive")}>
-              <span className="hidden sm:inline">YAYA / ZİYARETÇİ</span>
-              <span className="sm:hidden">YAYA</span>
-            </button>
+            {!guestExitState.active && (
+              <button onClick={() => { setMainTab('visitor'); setFormData(prev => ({ ...prev, plate: '', driver: '', driver_type: 'other', seal_number_entry: '', seal_number_exit: '' })); setShowManagementList(false); }} className={cx("ui-segment-btn whitespace-nowrap text-xs", mainTab === 'visitor' ? "ui-segment-active" : "ui-segment-inactive")}>
+                <span className="hidden sm:inline">YAYA / ZİYARETÇİ</span>
+                <span className="sm:hidden">YAYA</span>
+              </button>
+            )}
           </div>
 
           {mainTab === 'vehicle' && (
-            <div className="grid grid-cols-3 md:grid-cols-6 gap-1 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-1 mb-4">
               <SubTabBtn active={vehicleSubTab === 'guest'} onClick={() => { setVehicleSubTab('guest'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Car size={13} />} label="Misafir" />
               <SubTabBtn active={vehicleSubTab === 'staff'} onClick={() => { setVehicleSubTab('staff'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<User size={13} />} label="Personel" />
               <SubTabBtn active={vehicleSubTab === 'management'} onClick={() => { setVehicleSubTab('management'); setFormData(prev => ({ ...prev, driver_type: 'owner' })); }} icon={<Crown size={13} />} label="Yönetim" />
-              <SubTabBtn active={vehicleSubTab === 'service'} onClick={() => { setVehicleSubTab('service'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Bus size={13} />} label="Servis" />
               <SubTabBtn active={vehicleSubTab === 'sealed'} onClick={() => { setVehicleSubTab('sealed'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Lock size={13} />} label="Mühürlü" />
               <SubTabBtn active={vehicleSubTab === 'company'} onClick={() => { setVehicleSubTab('company'); setFormData(prev => ({ ...prev, driver_type: 'other' })); }} icon={<Briefcase size={13} />} label="Şirket" />
             </div>
@@ -6758,7 +7037,7 @@ const sendDailyReport = useCallback((dateParam) => {
                   </div>
                 )}
 
-                {isEntryDirection && (vehicleSubTab === 'company' || vehicleSubTab === 'service' || (vehicleSubTab === 'management' && formData.driver_type !== 'owner')) && (
+                {shouldShowVehicleEntryLocation && (
                   <div className="bg-blue-900/20 p-3 rounded border border-blue-500/30 animate-in fade-in slide-in-from-top-2">
                     <label className="text-xs text-blue-300 flex items-center gap-1 mb-1 font-bold"><MapPin size={12} /> {isEntryDirection ? 'GELDİĞİ LOKASYON (NEREDEN)' : 'GİDECEĞİ LOKASYON'}</label>
                     <Input type="text" placeholder="Örn: Merkez Ofis, Gümrük..." value={formData.entry_location} onChange={e => setFormData({ ...formData, entry_location: e.target.value })} />
@@ -6767,11 +7046,13 @@ const sendDailyReport = useCallback((dateParam) => {
 
                 {isExitDirection && (
                   <>
-                    <div className="bg-orange-900/20 p-3 rounded border border-orange-500/30 animate-in fade-in slide-in-from-top-2"><p className="text-orange-300 text-sm flex items-center gap-2"><AlertCircle size={16} />Plakayı girin. Eğer araç içerideyse otomatik çıkış yapılacak.</p></div>
-                    <div className="bg-blue-900/20 p-3 rounded border border-blue-500/30 animate-in fade-in slide-in-from-top-2 mt-2">
-                      <label className="text-xs text-blue-300 flex items-center gap-1 mb-1 font-bold"><MapPin size={12} /> GİDECEĞİ LOKASYON</label>
-                      <Input type="text" placeholder="Nereye gidecek? Örn: Merkez Ofis, Gümrük, Depo..." value={formData.exit_location} onChange={e => setFormData({ ...formData, exit_location: e.target.value })} />
-                    </div>
+                    <div className="bg-orange-900/20 p-3 rounded border border-orange-500/30 animate-in fade-in slide-in-from-top-2"><p className="text-orange-300 text-sm flex items-center gap-2"><AlertCircle size={16} />Plakayı girin. Araç içerideyse otomatik çıkış yapılır; giriş kaydı yoksa onay sonrası girişsiz çıkış kaydı oluşturulur.</p></div>
+                    {shouldShowVehicleExitLocation && (
+                      <div className="bg-blue-900/20 p-3 rounded border border-blue-500/30 animate-in fade-in slide-in-from-top-2 mt-2">
+                        <label className="text-xs text-blue-300 flex items-center gap-1 mb-1 font-bold"><MapPin size={12} /> GİDECEĞİ LOKASYON</label>
+                        <Input type="text" placeholder="Nereye gidecek? Örn: Merkez Ofis, Gümrük, Depo..." value={formData.exit_location} onChange={e => setFormData({ ...formData, exit_location: e.target.value })} />
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -6851,13 +7132,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 </FormField>
                 {plateHistory && plateHistory.count > 0 && (<div className="bg-purple-900/30 border border-purple-500/50 p-3 rounded mt-2 animate-in fade-in slide-in-from-top-2"><div className="flex items-center gap-2 mb-2"><History size={16} className="text-purple-400" /><span className="text-purple-200 text-sm font-bold">Bu kişi {plateHistory.count} kez geldi</span></div><div className="text-xs text-purple-300 space-y-1"><p>Son: <span className="font-bold text-white">{plateHistory.lastVisit}</span></p><p>İlgili: <span className="font-bold text-white">{plateHistory.lastHost}</span></p></div></div>)}
                 {isExitDirection && (
-                  <>
-                    <div className="bg-orange-900/20 p-3 rounded border border-orange-500/30 mt-2 animate-in fade-in slide-in-from-top-2"><p className="text-orange-300 text-sm flex items-center gap-2"><AlertCircle size={16} />İsmi girin. Eğer kişi içerideyse otomatik çıkış yapılacak.</p></div>
-                    <div className="bg-blue-900/20 p-3 rounded border border-blue-500/30 animate-in fade-in slide-in-from-top-2 mt-2">
-                      <label className="text-xs text-blue-300 flex items-center gap-1 mb-1 font-bold"><MapPin size={12} /> GİDECEĞİ LOKASYON</label>
-                      <Input type="text" placeholder="Nereye gidecek? Opsiyonel..." value={formData.exit_location} onChange={e => setFormData({ ...formData, exit_location: e.target.value })} />
-                    </div>
-                  </>
+                  <div className="bg-orange-900/20 p-3 rounded border border-orange-500/30 mt-2 animate-in fade-in slide-in-from-top-2"><p className="text-orange-300 text-sm flex items-center gap-2"><AlertCircle size={16} />İsmi girin. Kişi içerideyse otomatik çıkış yapılır; giriş kaydı yoksa onay sonrası girişsiz çıkış kaydı oluşturulur.</p></div>
                 )}
                 {isEntryDirection && (
                   <div className="grid grid-cols-2 gap-2 mt-2">
@@ -7407,7 +7682,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                     Zorla Çıkış
                                   </button>
                                 )}
-                                {isEntry && hasExited && !isAlreadyInside && (
+                                {!guestExitState.active && isEntry && hasExited && !isAlreadyInside && (
                                   <button
                                     onClick={() => handleReEntry(log)}
                                     disabled={actionLoading === log.id || loading}
@@ -7418,7 +7693,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                     Tekrar Giriş
                                   </button>
                                 )}
-                                {!isEntry && !isAlreadyInside && (
+                                {!guestExitState.active && !isEntry && !isAlreadyInside && (
                                   <button
                                     onClick={() => handleReEntry(log)}
                                     disabled={actionLoading === log.id || loading}
@@ -7436,25 +7711,29 @@ const sendDailyReport = useCallback((dateParam) => {
                                 )}
 
                                 {/* DÜZENLE BUTONU */}
-                                <button
-                                  onClick={() => {
-                                    setEditingLog(log);
-                                    setEditForm({ ...log, entry_location: getEntryLocation(log), exit_location: getExitLocation(log) });
-                                  }}
-                                  className="px-2 py-1.5 rounded bg-blue-900/50 hover:bg-blue-600 text-blue-400 hover:text-white transition-all"
-                                  title="Kaydı Düzenle"
-                                >
-                                  <Edit size={14} />
-                                </button>
+                                {!guestExitState.active && (
+                                  <button
+                                    onClick={() => {
+                                      setEditingLog(log);
+                                      setEditForm({ ...log, entry_location: getEntryLocation(log), exit_location: getExitLocation(log) });
+                                    }}
+                                    className="px-2 py-1.5 rounded bg-blue-900/50 hover:bg-blue-600 text-blue-400 hover:text-white transition-all"
+                                    title="Kaydı Düzenle"
+                                  >
+                                    <Edit size={14} />
+                                  </button>
+                                )}
 
                                 {/* SİL BUTONU */}
-                                <button
-                                  onClick={() => handleDelete(log)}
-                                  className="px-2 py-1.5 rounded bg-zinc-800 hover:bg-red-900 text-red-500 hover:text-red-300 transition-colors"
-                                  title="Kaydı Sil"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
+                                {!guestExitState.active && (
+                                  <button
+                                    onClick={() => handleDelete(log)}
+                                    className="px-2 py-1.5 rounded bg-zinc-800 hover:bg-red-900 text-red-500 hover:text-red-300 transition-colors"
+                                    title="Kaydı Sil"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -7800,9 +8079,9 @@ const sendDailyReport = useCallback((dateParam) => {
                       <td className="p-3 text-right">
                         <div className="flex gap-1 justify-end">
                           {isInside && (<button onClick={() => handleQuickExit(log)} disabled={actionLoading === log.id} className="text-red-400 hover:text-white p-2 bg-red-900/50 rounded hover:bg-red-600 transition text-xs font-bold flex items-center gap-1" title="Çıkış Yap"><LogOut size={14} /></button>)}
-                          {!isInside && !isAlreadyInside && (<button onClick={() => handleReEntry(log)} disabled={actionLoading === log.id || loading} className="text-green-400 hover:text-white p-2 bg-green-900/50 rounded hover:bg-green-600 transition text-xs font-bold flex items-center gap-1" title="Tekrar Giriş Yap"><RotateCcw size={14} /></button>)}
-                          <button onClick={() => { setEditingLog(log); setEditForm({ ...log, entry_location: getEntryLocation(log), exit_location: getExitLocation(log) }); }} className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"><Edit size={14} /></button>
-                          <button onClick={() => handleDelete(log)} className="text-red-400 hover:text-red-300 p-2 bg-zinc-900 rounded hover:bg-red-900/50 transition"><Trash2 size={14} /></button>
+                          {!guestExitState.active && !isInside && !isAlreadyInside && (<button onClick={() => handleReEntry(log)} disabled={actionLoading === log.id || loading} className="text-green-400 hover:text-white p-2 bg-green-900/50 rounded hover:bg-green-600 transition text-xs font-bold flex items-center gap-1" title="Tekrar Giriş Yap"><RotateCcw size={14} /></button>)}
+                          {!guestExitState.active && (<button onClick={() => { setEditingLog(log); setEditForm({ ...log, entry_location: getEntryLocation(log), exit_location: getExitLocation(log) }); }} className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"><Edit size={14} /></button>)}
+                          {!guestExitState.active && (<button onClick={() => handleDelete(log)} className="text-red-400 hover:text-red-300 p-2 bg-zinc-900 rounded hover:bg-red-900/50 transition"><Trash2 size={14} /></button>)}
                         </div>
                       </td>
                     </tr>
