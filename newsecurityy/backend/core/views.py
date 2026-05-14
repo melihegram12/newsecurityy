@@ -1,16 +1,23 @@
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+import logging
+import os
+import uuid
 import unicodedata
 
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
+from django.utils.text import get_valid_filename
 from rest_framework import generics
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework import status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -52,6 +59,9 @@ from .serializers import (
     VehiclePresetSerializer,
     WorkShiftSerializer,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 ROLE_ADMIN = 'ADMIN'
@@ -1525,3 +1535,78 @@ class AccessEventListView(generics.ListAPIView):
             qs = qs.filter(gate_id=gate_id)
 
         return qs
+
+
+class ImageNaturalizeView(APIView):
+    """
+    POST /api/images/naturalize
+    Multipart fields: image, realism_strength, skin_texture_recovery,
+                      color_naturalness, shadow_correction, grain_amount,
+                      sharpness_reduction, lens_softness.
+    """
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        uploaded = request.FILES.get('image')
+        try:
+            from .image_processing.naturalize import naturalize_uploaded_image
+
+            result = naturalize_uploaded_image(
+                uploaded,
+                raw_settings=request.data,
+                output_format=request.data.get('output_format'),
+            )
+        except ModuleNotFoundError as exc:
+            if exc.name == 'PIL':
+                return Response(
+                    {'detail': 'Pillow bagimliligi kurulu degil. backend/requirements.txt ile ortamı guncelleyin.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            raise
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Image naturalize processing failed')
+            return Response(
+                {'detail': 'Gorsel islenirken hata olustu.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        batch_id = uuid.uuid4().hex
+        safe_name = get_valid_filename(uploaded.name or 'image')
+        root, ext = os.path.splitext(safe_name)
+        root = (root or 'image')[:80]
+        original_ext = (ext or result.original_extension or '.jpg').lower()
+
+        original_path = default_storage.save(
+            f'image-naturalizer/original/{batch_id}_{root}{original_ext}',
+            ContentFile(result.original_bytes),
+        )
+        processed_path = default_storage.save(
+            f'image-naturalizer/processed/{batch_id}_{root}_naturalized{result.processed_extension}',
+            ContentFile(result.processed_bytes),
+        )
+
+        return Response(
+            {
+                'id': batch_id,
+                'original_url': request.build_absolute_uri(default_storage.url(original_path)),
+                'processed_url': request.build_absolute_uri(default_storage.url(processed_path)),
+                'processed_content_type': result.processed_content_type,
+                'original_path': original_path,
+                'processed_path': processed_path,
+                'original_dimensions': {
+                    'width': result.original_width,
+                    'height': result.original_height,
+                },
+                'output_dimensions': {
+                    'width': result.output_width,
+                    'height': result.output_height,
+                },
+                'resized_for_processing': result.resized_for_processing,
+                'settings': result.settings,
+                'adjustments': result.adjustments,
+            },
+            status=status.HTTP_201_CREATED,
+        )
