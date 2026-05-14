@@ -1,8 +1,9 @@
 import React from 'react';
 import { cx } from '../../lib/utils';
 
-const Button = ({ variant = 'primary', size = 'md', className = '', ...props }) => (
+const Button = ({ variant = 'primary', size = 'md', className = '', type = 'button', ...props }) => (
   <button
+    type={type}
     className={cx(
       "ui-btn",
       variant === 'primary' && "ui-btn-primary",

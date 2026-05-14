@@ -1,66 +1,69 @@
 import React from 'react';
+import { vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 
-const mockGetSetting = jest.fn();
-const mockGetActiveLogs = jest.fn();
-const mockGetAllLogs = jest.fn();
-const mockSetSetting = jest.fn();
-const mockInsertLog = jest.fn();
-const mockUpdateLog = jest.fn();
-const mockDeleteLog = jest.fn();
-const mockExitLog = jest.fn();
-const mockGetSyncStatus = jest.fn();
-const mockSupabaseFrom = jest.fn();
-let mockIsElectron = true;
-
-jest.mock('./dbClient', () => ({
-  db: {
-    getSetting: (...args) => mockGetSetting(...args),
-    getActiveLogs: (...args) => mockGetActiveLogs(...args),
-    getAllLogs: (...args) => mockGetAllLogs(...args),
-    setSetting: (...args) => mockSetSetting(...args),
-    insertLog: (...args) => mockInsertLog(...args),
-    updateLog: (...args) => mockUpdateLog(...args),
-    deleteLog: (...args) => mockDeleteLog(...args),
-    exitLog: (...args) => mockExitLog(...args),
-  },
-  get isElectron() {
-    return mockIsElectron;
-  },
-  isMobile: false,
-  processSyncQueue: jest.fn(),
-  processLocalSyncQueue: jest.fn(),
-  syncFromSupabase: jest.fn(),
-  syncFromLocalApi: jest.fn(),
-  exportLocalLogsToSupabase: jest.fn(),
-  getSyncStatus: (...args) => mockGetSyncStatus(...args),
+const mocks = vi.hoisted(() => ({
+  getSetting: vi.fn(),
+  getActiveLogs: vi.fn(),
+  getAllLogs: vi.fn(),
+  setSetting: vi.fn(),
+  insertLog: vi.fn(),
+  updateLog: vi.fn(),
+  deleteLog: vi.fn(),
+  exitLog: vi.fn(),
+  getSyncStatus: vi.fn(),
+  supabaseFrom: vi.fn(),
+  isElectron: true,
 }));
 
-jest.mock('./supabaseClient', () => ({
+vi.mock('./dbClient', () => ({
+  db: {
+    getSetting: (...args) => mocks.getSetting(...args),
+    getActiveLogs: (...args) => mocks.getActiveLogs(...args),
+    getAllLogs: (...args) => mocks.getAllLogs(...args),
+    setSetting: (...args) => mocks.setSetting(...args),
+    insertLog: (...args) => mocks.insertLog(...args),
+    updateLog: (...args) => mocks.updateLog(...args),
+    deleteLog: (...args) => mocks.deleteLog(...args),
+    exitLog: (...args) => mocks.exitLog(...args),
+  },
+  get isElectron() {
+    return mocks.isElectron;
+  },
+  isMobile: false,
+  processSyncQueue: vi.fn(),
+  processLocalSyncQueue: vi.fn(),
+  syncFromSupabase: vi.fn(),
+  syncFromLocalApi: vi.fn(),
+  exportLocalLogsToSupabase: vi.fn(),
+  getSyncStatus: (...args) => mocks.getSyncStatus(...args),
+}));
+
+vi.mock('./supabaseClient', () => ({
   supabase: {
-    from: (...args) => mockSupabaseFrom(...args),
+    from: (...args) => mocks.supabaseFrom(...args),
     auth: {
-      signInWithPassword: jest.fn(),
-      signOut: jest.fn(),
+      signInWithPassword: vi.fn(),
+      signOut: vi.fn(),
     },
   },
 }));
 
 describe('App anonymous guest exit mode', () => {
   beforeEach(() => {
-    mockIsElectron = true;
-    mockGetSetting.mockResolvedValue(null);
-    mockGetActiveLogs.mockResolvedValue([]);
-    mockGetAllLogs.mockResolvedValue([]);
-    mockSetSetting.mockResolvedValue(null);
-    mockInsertLog.mockResolvedValue({ id: 'log-1' });
-    mockUpdateLog.mockResolvedValue(null);
-    mockDeleteLog.mockResolvedValue(null);
-    mockExitLog.mockResolvedValue({ success: true });
-    mockGetSyncStatus.mockReturnValue({});
-    mockSupabaseFrom.mockReset();
-    mockSupabaseFrom.mockImplementation(() => ({
+    mocks.isElectron = true;
+    mocks.getSetting.mockResolvedValue(null);
+    mocks.getActiveLogs.mockResolvedValue([]);
+    mocks.getAllLogs.mockResolvedValue([]);
+    mocks.setSetting.mockResolvedValue(null);
+    mocks.insertLog.mockResolvedValue({ id: 'log-1' });
+    mocks.updateLog.mockResolvedValue(null);
+    mocks.deleteLog.mockResolvedValue(null);
+    mocks.exitLog.mockResolvedValue({ success: true });
+    mocks.getSyncStatus.mockReturnValue({});
+    mocks.supabaseFrom.mockReset();
+    mocks.supabaseFrom.mockImplementation(() => ({
       select: jest.fn(() => ({
         is: jest.fn(() => ({
           order: jest.fn().mockResolvedValue({ data: [], error: null }),
@@ -137,12 +140,12 @@ describe('App anonymous guest exit mode', () => {
   });
 
   test('handles online event when offline queue storage read throws', async () => {
-    mockIsElectron = false;
+    mocks.isElectron = false;
 
     render(<App />);
     expect(await screen.findByText(/Malhotra/i)).toBeInTheDocument();
 
-    mockSupabaseFrom.mockClear();
+    mocks.supabaseFrom.mockClear();
     const getItemSpy = jest.spyOn(Storage.prototype, 'getItem').mockImplementation((key) => {
       if (key === 'security_offline_queue') {
         throw new Error('storage blocked');
@@ -152,7 +155,7 @@ describe('App anonymous guest exit mode', () => {
 
     window.dispatchEvent(new Event('online'));
 
-    await waitFor(() => expect(mockSupabaseFrom).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.supabaseFrom).toHaveBeenCalled());
     expect(screen.getByText(/Malhotra/i)).toBeInTheDocument();
 
     getItemSpy.mockRestore();

@@ -1,7 +1,8 @@
-import React, { memo, useEffect, useCallback } from 'react';
+import React, { memo, useEffect, useCallback, useId, useRef } from 'react';
 import { X } from 'lucide-react';
 import { cx } from '../../lib/utils';
 import { styles } from '../../lib/tokens';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 const Modal = memo(function Modal({
   isOpen,
@@ -12,6 +13,10 @@ const Modal = memo(function Modal({
   className = '',
   showClose = true,
 }) {
+  const modalRef = useRef(null);
+  const titleId = useId();
+  useFocusTrap(modalRef, isOpen);
+
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Escape' && onClose) onClose();
   }, [onClose]);
@@ -19,10 +24,11 @@ const Modal = memo(function Modal({
   useEffect(() => {
     if (!isOpen) return;
     document.addEventListener('keydown', handleKeyDown);
+    const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = '';
+      document.body.style.overflow = prevOverflow;
     };
   }, [isOpen, handleKeyDown]);
 
@@ -40,20 +46,22 @@ const Modal = memo(function Modal({
       className={styles.overlay}
       role="dialog"
       aria-modal="true"
+      aria-labelledby={title ? titleId : undefined}
+      ref={modalRef}
       onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}
     >
       <div className={cx(
-        'bg-zinc-900/95 border border-zinc-700/50 rounded-md w-full shadow-2xl animate-in fade-in zoom-in',
+        'bg-popover/95 border border-border/70 rounded-lg w-full shadow-card animate-in fade-in zoom-in',
         sizeClass,
         className
       )}>
         {(title || showClose) && (
-          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700/40">
-            {title && <h3 className="text-sm font-bold text-white tracking-tight">{title}</h3>}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
+            {title && <h3 id={titleId} className="text-sm font-semibold text-foreground tracking-tight">{title}</h3>}
             {showClose && onClose && (
               <button
                 onClick={onClose}
-                className="text-zinc-500 hover:text-white transition-colors p-1.5 rounded hover:bg-white/10"
+                className="modal-close-btn text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-md hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                 aria-label="Kapat"
               >
                 <X size={16} />

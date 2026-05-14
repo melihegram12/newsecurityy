@@ -5,6 +5,10 @@ module.exports = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["Geist", "Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+        mono: ["Geist Mono", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+      },
       colors: {
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
@@ -32,9 +36,9 @@ module.exports = {
         "2xl": "calc(var(--radius) + 4px)",
       },
       boxShadow: {
-        soft: "0 1px 3px rgba(0,0,0,0.25)",
-        card: "0 2px 8px rgba(0,0,0,0.3)",
-        glow: "0 0 12px rgba(59,130,246,0.15)",
+        soft: "0 12px 30px -26px rgba(0,0,0,0.86)",
+        card: "0 18px 44px -36px rgba(0,0,0,0.9)",
+        glow: "0 12px 32px -24px hsl(var(--primary) / 0.55)",
       },
       keyframes: {
         "fade-in": { from: { opacity: "0" }, to: { opacity: "1" } },

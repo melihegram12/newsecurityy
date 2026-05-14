@@ -1,8 +1,10 @@
-const mockSupabase = {
-  from: jest.fn(),
-};
+import { vi } from 'vitest';
 
-jest.mock('./supabaseClient', () => ({
+const mockSupabase = vi.hoisted(() => ({
+  from: vi.fn(),
+}));
+
+vi.mock('./supabaseClient', () => ({
   supabase: mockSupabase,
 }));
 
@@ -40,7 +42,7 @@ describe('dbClient created_at integrity guards', () => {
       delete window.electronAPI;
     }
 
-    return require('./dbClient');
+    return import('./dbClient.js');
   }
 
   function buildConflictError() {
@@ -64,7 +66,7 @@ describe('dbClient created_at integrity guards', () => {
 
     mockSupabase.from.mockReturnValue({ upsert, insert });
 
-    const { syncToSupabase, getSyncStatus } = loadDbClient();
+    const { syncToSupabase, getSyncStatus } = await loadDbClient();
 
     const result = await syncToSupabase('INSERT', {
       type: 'vehicle',
@@ -108,7 +110,7 @@ describe('dbClient created_at integrity guards', () => {
       getAllLogs: jest.fn().mockResolvedValue([]),
     };
 
-    const { exportLocalLogsToSupabase, getSyncStatus } = loadDbClient({ electronDb });
+    const { exportLocalLogsToSupabase, getSyncStatus } = await loadDbClient({ electronDb });
 
     const result = await exportLocalLogsToSupabase({ pageSize: 50 });
 

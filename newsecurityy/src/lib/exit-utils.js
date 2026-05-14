@@ -1,9 +1,73 @@
 import { formatTrDateTime, getEntryLocation, matchesByTab } from './utils';
 import { getLogBindingId } from './log-sync-utils';
 
-export function getExitCandidates(activeLogs = [], mainTab = 'vehicle') {
+export const SUB_TAB_TO_SUB_CATEGORY = {
+  guest: 'Misafir Araç',
+  staff: 'Personel Aracı',
+  management: 'Yönetim Aracı',
+  service: 'Servis Aracı',
+  sealed: 'Mühürlü Araç',
+  company: 'Şirket Aracı',
+};
+
+export function matchesVehicleSubCategory(log = {}, vehicleSubTab = '') {
+  if (!vehicleSubTab) return true;
+  const expectedSubCategory = SUB_TAB_TO_SUB_CATEGORY[vehicleSubTab];
+  if (!expectedSubCategory) return true;
+  const actualSubCategory = String(log?.sub_category || '');
+  return actualSubCategory === expectedSubCategory
+    || actualSubCategory.startsWith(`${expectedSubCategory} `)
+    || actualSubCategory.startsWith(`${expectedSubCategory}(`);
+}
+
+const EXIT_LOCATION_DRIVER_TYPES = new Set(['driver', 'supervisor', 'manual']);
+
+export function shouldCreateIndependentExit({
+  mainTab = 'vehicle',
+  isExitDirection = false,
+  vehicleSubTab = '',
+} = {}) {
+  return mainTab === 'vehicle'
+    && Boolean(isExitDirection)
+    && vehicleSubTab === 'company';
+}
+
+export function shouldAskVehicleExitLocation({
+  mainTab = 'vehicle',
+  isExitDirection = false,
+  vehicleSubTab = '',
+  driverType = '',
+} = {}) {
+  return mainTab === 'vehicle'
+    && Boolean(isExitDirection)
+    && vehicleSubTab === 'management'
+    && EXIT_LOCATION_DRIVER_TYPES.has(driverType);
+}
+
+export function shouldAskVehicleEntryLocation({
+  mainTab = 'vehicle',
+  isEntryDirection = false,
+  vehicleSubTab = '',
+  driverType = '',
+} = {}) {
+  return mainTab === 'vehicle'
+    && Boolean(isEntryDirection)
+    && (
+      vehicleSubTab === 'company'
+      || (vehicleSubTab === 'management' && driverType !== 'owner')
+    );
+}
+
+export function getExitCandidates(activeLogs = [], mainTab = 'vehicle', vehicleSubTab = '') {
   return [...(Array.isArray(activeLogs) ? activeLogs : [])]
-    .filter((log) => log?.type === mainTab && !log?.exit_at)
+    .filter((log) => {
+      if (log?.type !== mainTab || log?.exit_at) return false;
+      // Araç sekmesinde alt kategoriye göre de filtrele
+      if (mainTab === 'vehicle' && vehicleSubTab) {
+        if (!matchesVehicleSubCategory(log, vehicleSubTab)) return false;
+      }
+      return true;
+    })
     .sort((a, b) => new Date(b?.created_at || 0) - new Date(a?.created_at || 0));
 }
 
@@ -25,23 +89,29 @@ export function resolveExitRecord({
   allLogs = [],
   mainTab = 'vehicle',
   rawIdentifier = '',
+  vehicleSubTab = '',
 } = {}) {
-  const exitCandidates = getExitCandidates(activeLogs, mainTab);
+  const exitCandidates = getExitCandidates(activeLogs, mainTab, vehicleSubTab);
   const matchesSelectedLogId = (log) =>
     getLogBindingId(log) === String(selectedExitLogId)
     || String(log?.id || '') === String(selectedExitLogId);
+  const hasIdentifier = Boolean(rawIdentifier && String(rawIdentifier).trim());
 
   if (selectedExitLogId) {
     const record = exitCandidates.find(matchesSelectedLogId)
-      || (Array.isArray(allLogs) ? allLogs.find(matchesSelectedLogId) : null)
+      || getExitCandidates(allLogs, mainTab, vehicleSubTab).find(matchesSelectedLogId)
       || null;
 
-    return record
-      ? { record, matches: [record], reason: 'selected' }
-      : { record: null, matches: [], reason: 'selected_not_found' };
+    if (!record) {
+      return { record: null, matches: [], reason: 'selected_not_found' };
+    }
+
+    if (!hasIdentifier || matchesByTab(record, rawIdentifier, mainTab)) {
+      return { record, matches: [record], reason: 'selected' };
+    }
   }
 
-  if (!rawIdentifier || !String(rawIdentifier).trim()) {
+  if (!hasIdentifier) {
     return { record: null, matches: [], reason: 'missing_input' };
   }
 

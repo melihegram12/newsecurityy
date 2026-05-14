@@ -1,6 +1,7 @@
-import React, { memo } from 'react';
+import React, { memo, useRef } from 'react';
 import { AlertTriangle, Info, AlertCircle } from 'lucide-react';
 import Button from './Button';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 const TYPE_CONFIG = {
   warning: { icon: AlertTriangle, color: 'text-amber-500' },
@@ -22,6 +23,9 @@ const ConfirmModal = memo(function ConfirmModal({
   confirmVariant,
   secondaryVariant = 'secondary',
 }) {
+  const modalRef = useRef(null);
+  useFocusTrap(modalRef, isOpen);
+
   if (!isOpen) return null;
 
   const config = TYPE_CONFIG[type] || TYPE_CONFIG.warning;
@@ -29,7 +33,7 @@ const ConfirmModal = memo(function ConfirmModal({
   const resolvedConfirmVariant = confirmVariant || (type === 'danger' ? 'destructive' : type === 'info' ? 'primary' : 'secondary');
 
   return (
-    <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" ref={modalRef}>
       <div className="bg-zinc-900/95 border border-zinc-700/50 rounded-md p-5 w-full max-w-sm shadow-2xl animate-in fade-in zoom-in">
         <h3 className="text-base font-bold text-white mb-3 flex gap-2 items-center">
           <IconComponent size={18} className={config.color} />

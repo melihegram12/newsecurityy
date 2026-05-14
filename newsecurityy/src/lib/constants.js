@@ -12,7 +12,23 @@ export const LOCAL_ROLE_SESSION_KEY = 'local_role_session';
 export const ACTIVE_ROLE_KEY = 'active_role';
 export const ACTION_LOGS_KEY = 'app_action_logs';
 export const LOCAL_SYNC_ENABLED = String(process.env.REACT_APP_LOCAL_SYNC_ENABLED || process.env.VITE_LOCAL_SYNC_ENABLED || '').toLowerCase() === 'true';
-export const LOCAL_API_DEFAULT_URL = process.env.REACT_APP_LOCAL_API_URL || process.env.VITE_LOCAL_API_URL || '';
+const normalizeApiBase = (value = '') => String(value || '').trim().replace(/\/+$/, '');
+export const resolveLocalApiDefaultUrl = (
+  env = process.env,
+  locationLike = typeof window !== 'undefined' ? window.location : null,
+) => {
+  const explicit = normalizeApiBase(env.REACT_APP_LOCAL_API_URL || env.VITE_LOCAL_API_URL || '');
+  if (explicit) return explicit;
+
+  const protocol = String(locationLike?.protocol || '').toLowerCase();
+  const origin = normalizeApiBase(locationLike?.origin || '');
+  if ((protocol === 'http:' || protocol === 'https:') && origin) {
+    return `${origin}/api`;
+  }
+
+  return '';
+};
+export const LOCAL_API_DEFAULT_URL = resolveLocalApiDefaultUrl();
 export const SHOW_SYNC_PANEL_KEY = 'show_sync_panel';
 export const SHOW_SMTP_PANEL_KEY = 'show_smtp_panel';
 export const SHOW_HISTORY_PANEL_KEY = 'show_history_panel';
@@ -40,11 +56,12 @@ export const DEFAULT_FEATURE_FLAGS = Object.freeze({
 export const ROLE_SECURITY = 'SECURITY';
 export const ROLE_HR = 'HR';
 export const ROLE_DEVELOPER = 'DEVELOPER';
-export const ROLE_FALLBACK_PASSWORDS = {
-  [ROLE_SECURITY]: process.env.REACT_APP_SECURITY_PASSWORD || process.env.VITE_SECURITY_PASSWORD || '',
-  [ROLE_HR]: process.env.REACT_APP_HR_PASSWORD || process.env.VITE_HR_PASSWORD || '',
-  [ROLE_DEVELOPER]: process.env.REACT_APP_DEVELOPER_PASSWORD || process.env.VITE_DEVELOPER_PASSWORD || '',
-};
+export const resolveRoleFallbackPasswords = (env = process.env) => ({
+  [ROLE_SECURITY]: env.REACT_APP_SECURITY_PASSWORD || env.VITE_SECURITY_PASSWORD || '',
+  [ROLE_HR]: env.REACT_APP_HR_PASSWORD || env.VITE_HR_PASSWORD || '',
+  [ROLE_DEVELOPER]: env.REACT_APP_DEVELOPER_PASSWORD || env.VITE_DEVELOPER_PASSWORD || '',
+});
+export const ROLE_FALLBACK_PASSWORDS = Object.freeze(resolveRoleFallbackPasswords());
 export const ROLE_FALLBACK_USERS = {
   [ROLE_SECURITY]: { username: 'guvenlik_personeli', email: 'guvenlik@local' },
   [ROLE_HR]: { username: 'insan_kaynaklari', email: 'ik@local' },

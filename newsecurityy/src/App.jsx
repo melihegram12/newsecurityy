@@ -3,7 +3,7 @@ import {
   Car, User, FileText, CheckCircle, Clock, LogOut, Search,
   Edit, X, Wifi, WifiOff, LogIn, MapPin, Lock, Briefcase, Layers, RefreshCw, UserMinus, UserCheck, AlertTriangle, Crown,
   Trash2, BarChart3, Calendar, Filter, Phone, TrendingUp, Users, Activity, PieChart, History, Timer, AlertCircle, ArrowRightCircle, ArrowLeftCircle,
-  CalendarClock, Mail, Volume2, VolumeX, Zap, Star, Send, RotateCcw, Folder, Upload
+  CalendarClock, Mail, Volume2, VolumeX, Zap, Star, Send, RotateCcw, Folder, Upload, Camera, ShieldCheck
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { db as dbClient, isElectron, isMobile, processSyncQueue, processLocalSyncQueue, syncFromSupabase, syncFromLocalApi, exportLocalLogsToSupabase, getSyncStatus } from './dbClient';
@@ -33,11 +33,13 @@ import {
   needsPlainCsvFallback, parseCsvTextLoose, pickSupabaseCompatibleLog, extractPagedList,
 } from './lib/utils';
 import { buildAuditHash, verifyAuditChain } from './lib/audit-utils';
+import { readExcelRowsFromBuffer, writeRowsToExcelFile } from './lib/excel-utils';
 import {
   buildExitOptionLabel,
   getExitCandidates,
   matchesVehicleSubCategory,
   resolveExitRecord,
+  shouldCreateIndependentExit,
   shouldAskVehicleEntryLocation,
   shouldAskVehicleExitLocation,
   SUB_TAB_TO_SUB_CATEGORY,
@@ -59,6 +61,9 @@ import { Button, Card, FormField, TableHeadCell, Toast, ConfirmModal, SubTabBtn,
 
 // --- LOGO İÇE AKTARMA ---
 import logoImg from './logo.png';
+
+const PhotoRealismTool = React.lazy(() => import('./features/photoRealism/PhotoRealismTool'));
+const EnterpriseCenter = React.lazy(() => import('./features/enterpriseCenter/EnterpriseCenter'));
 
 function createEmptyAdvancedReport() {
   return {
@@ -277,6 +282,7 @@ export default function App() {
   const [effectiveUpdateUrl, setEffectiveUpdateUrl] = useState('');
   const effectiveLocalApiUrl = localApiUrl?.trim() ? localApiUrl.trim() : LOCAL_API_DEFAULT_URL;
   const canUseLocalApi = LOCAL_SYNC_ENABLED && Boolean(effectiveLocalApiUrl) && !isMobile;
+  const canUseImageProcessingApi = Boolean(effectiveLocalApiUrl);
   const localApiHeaders = useMemo(() => {
     const headers = { 'Content-Type': 'application/json' };
     if (localApiKey?.trim()) headers['X-Api-Key'] = localApiKey.trim();
@@ -287,11 +293,14 @@ export default function App() {
     const base = (effectiveLocalApiUrl || '').replace(/\/$/, '');
     const endpoint = (path || '').replace(/^\//, '');
     const url = `${base}/${endpoint}`;
+    const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    const headers = { ...localApiHeaders, ...(options.headers || {}) };
+    if (isFormDataBody) delete headers['Content-Type'];
     const opts = {
       ...options,
-      headers: { ...localApiHeaders, ...(options.headers || {}) },
+      headers,
     };
-    if (opts.body && typeof opts.body !== 'string') {
+    if (opts.body && typeof opts.body !== 'string' && !isFormDataBody) {
       opts.body = JSON.stringify(opts.body);
     }
     const res = await fetch(url, opts);
@@ -510,6 +519,11 @@ export default function App() {
   const [vehicleSubTab, setVehicleSubTab] = useState('guest');
   const [visitorSubTab, setVisitorSubTab] = useState('guest');
   const [formData, setFormData] = useState({ plate: '', driver: '', driver_type: 'owner', name: '', host: '', note: '', entry_location: '', exit_location: '', seal_number_entry: '', seal_number_exit: '', tc_no: '', phone: '' });
+  const independentExitMode = shouldCreateIndependentExit({
+    mainTab,
+    isExitDirection,
+    vehicleSubTab,
+  });
   const shouldShowVehicleExitLocation = shouldAskVehicleExitLocation({
     mainTab,
     isExitDirection,
@@ -593,14 +607,6 @@ export default function App() {
   }, [exitCandidates, selectedExitLogId]);
 
   useEffect(() => {
-    if (!isExitDirection) return;
-    if (selectedExitLogId) return;
-    if (exitCandidates.length === 1) {
-      setSelectedExitLogId(getLogBindingId(exitCandidates[0]) || String(exitCandidates[0].id || ''));
-    }
-  }, [isExitDirection, selectedExitLogId, exitCandidates]);
-
-  useEffect(() => {
     if (vehicleSubTab !== 'service') return;
     setVehicleSubTab('guest');
     setFormData(prev => ({
@@ -659,10 +665,6 @@ export default function App() {
   }, []);
 
   const closeToast = useCallback(() => setNotification(null), []);
-  const loadXlsx = useCallback(async () => {
-    const module = await import('xlsx');
-    return module.default || module;
-  }, []);
   const unwrapElectronDbResult = useCallback((result, context = 'electron-db') => {
     if (result && typeof result === 'object' && result.__ipcError) {
       const error = new Error(result.error || `${context} hatasi`);
@@ -1221,12 +1223,7 @@ export default function App() {
     const [buffer, text] = await Promise.all([file.arrayBuffer(), file.text()]);
     let rows = [];
     try {
-      const XLSX = await loadXlsx();
-      const workbook = XLSX.read(buffer, { type: 'array', raw: true, cellDates: true });
-      const sheet = workbook?.Sheets?.[workbook?.SheetNames?.[0]];
-      rows = sheet
-        ? XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true, cellDates: true })
-        : [];
+      rows = await readExcelRowsFromBuffer(buffer);
     } catch (e) {
       rows = [];
     }
@@ -1237,7 +1234,7 @@ export default function App() {
     }
 
     return rows;
-  }, [loadXlsx]);
+  }, []);
 
   const handleImportFileChange = useCallback((event) => {
     const file = event?.target?.files?.[0];
@@ -1832,121 +1829,123 @@ export default function App() {
         }
         return extraData;
       };
-      const exitLookup = resolveExitRecord({
-        selectedExitLogId,
-        activeLogs,
-        allLogs,
-        mainTab,
-        rawIdentifier,
-        vehicleSubTab,
-      });
-      const existingLog = exitLookup.record;
-
-      if (existingLog) {
-        independentExitConfirmRef.current = '';
-        setSelectedExitLogId(getLogBindingId(existingLog) || String(existingLog.id || ''));
-        if (existingLog.sub_category === 'Mühürlü Araç') {
-          setExitingLogData(existingLog);
-          setExitSealNumber('');
-          setExitSealModalOpen(true);
-          return;
-        }
-
-        const extraData = buildExitExtraData(existingLog);
-        const identifier = existingLog.plate || existingLog.name || rawIdentifier;
-
-        setConfirmModal({
-          isOpen: true,
-          title: 'Çıkış Onayı',
-          message: `${identifier} için çıkış işlemini onaylıyor musunuz?${extraData.exit_location ? `\nGidilen: ${extraData.exit_location}` : ''}`,
-          type: 'warning',
-          onConfirm: async () => {
-            setConfirmModal(prev => ({ ...prev, isOpen: false }));
-            const didExit = await handleExit(getLogBindingId(existingLog) || existingLog.id, null, extraData, existingLog);
-            if (didExit) resetForm();
-          }
+      if (!independentExitMode) {
+        const exitLookup = resolveExitRecord({
+          selectedExitLogId,
+          activeLogs,
+          allLogs,
+          mainTab,
+          rawIdentifier,
+          vehicleSubTab,
         });
-        return;
-      } else {
-        if (exitLookup.reason === 'selected_not_found') {
+        const existingLog = exitLookup.record;
+
+        if (existingLog) {
           independentExitConfirmRef.current = '';
-          setSelectedExitLogId('');
-          showToast("Seçilen aktif kayıt artık içeride görünmüyor. Listeyi yenileyip tekrar seçin.", "error");
-          return;
-        }
-        if (exitLookup.reason === 'ambiguous') {
-          independentExitConfirmRef.current = '';
-          showToast("Birden fazla aktif kayıt bulundu. Lütfen listeden doğru kaydı seçin.", "error");
-          return;
-        }
-        if (exitLookup.reason === 'missing_input') {
-          independentExitConfirmRef.current = '';
-          showToast("Çıkış için aktif kaydı seçin veya plaka/isim girin.", "error");
-          return;
-        }
-        // Local state'de bulunamadı — DB'ye taze sorgu at (Giriş modundaki kontrol gibi)
-        const expectedSubCategory = mainTab === 'vehicle' ? SUB_TAB_TO_SUB_CATEGORY[vehicleSubTab] : null;
-        try {
-          if (isElectron) {
-            const activeData = await dbClient.getActiveLogs();
-            const dbMatches = (activeData || []).filter(log => {
-              if (!matchesByTab(log, rawIdentifier, mainTab)) return false;
-              if (expectedSubCategory && !matchesVehicleSubCategory(log, vehicleSubTab)) return false;
-              return true;
-            });
-            if (dbMatches.length === 1) {
-              const dbRecord = dbMatches[0];
-              applyLocalLogUpsert(dbRecord, { includeInActive: true });
-              const didExit = await handleExit(getLogBindingId(dbRecord) || dbRecord.id, null, buildExitExtraData(dbRecord), dbRecord);
+          setSelectedExitLogId(getLogBindingId(existingLog) || String(existingLog.id || ''));
+          if (existingLog.sub_category === 'Mühürlü Araç') {
+            setExitingLogData(existingLog);
+            setExitSealNumber('');
+            setExitSealModalOpen(true);
+            return;
+          }
+
+          const extraData = buildExitExtraData(existingLog);
+          const identifier = existingLog.plate || existingLog.name || rawIdentifier;
+
+          setConfirmModal({
+            isOpen: true,
+            title: 'Çıkış Onayı',
+            message: `${identifier} için çıkış işlemini onaylıyor musunuz?${extraData.exit_location ? `\nGidilen: ${extraData.exit_location}` : ''}`,
+            type: 'warning',
+            onConfirm: async () => {
+              setConfirmModal(prev => ({ ...prev, isOpen: false }));
+              const didExit = await handleExit(getLogBindingId(existingLog) || existingLog.id, null, extraData, existingLog);
               if (didExit) resetForm();
-              return;
             }
-          } else {
-            const reallyOnline = await checkOnlineStatus();
-            if (reallyOnline) {
-              const col = mainTab === 'vehicle' ? 'plate' : 'name';
-              let dbQuery = supabase
-                .from('security_logs')
-                .select('*')
-                .is('exit_at', null)
-                .eq(col, rawIdentifier.toUpperCase());
-              if (expectedSubCategory) {
-                dbQuery = dbQuery.ilike('sub_category', `${expectedSubCategory}%`);
-              }
-              const { data: dbMatches } = await dbQuery;
-              if (dbMatches && dbMatches.length === 1) {
+          });
+          return;
+        } else {
+          if (exitLookup.reason === 'selected_not_found') {
+            independentExitConfirmRef.current = '';
+            setSelectedExitLogId('');
+            showToast("Seçilen aktif kayıt artık içeride görünmüyor. Listeyi yenileyip tekrar seçin.", "error");
+            return;
+          }
+          if (exitLookup.reason === 'ambiguous') {
+            independentExitConfirmRef.current = '';
+            showToast("Birden fazla aktif kayıt bulundu. Lütfen listeden doğru kaydı seçin.", "error");
+            return;
+          }
+          if (exitLookup.reason === 'missing_input') {
+            independentExitConfirmRef.current = '';
+            showToast("Çıkış için aktif kaydı seçin veya plaka/isim girin.", "error");
+            return;
+          }
+          // Local state'de bulunamadı — DB'ye taze sorgu at (Giriş modundaki kontrol gibi)
+          const expectedSubCategory = mainTab === 'vehicle' ? SUB_TAB_TO_SUB_CATEGORY[vehicleSubTab] : null;
+          try {
+            if (isElectron) {
+              const activeData = await dbClient.getActiveLogs();
+              const dbMatches = (activeData || []).filter(log => {
+                if (!matchesByTab(log, rawIdentifier, mainTab)) return false;
+                if (expectedSubCategory && !matchesVehicleSubCategory(log, vehicleSubTab)) return false;
+                return true;
+              });
+              if (dbMatches.length === 1) {
                 const dbRecord = dbMatches[0];
                 applyLocalLogUpsert(dbRecord, { includeInActive: true });
                 const didExit = await handleExit(getLogBindingId(dbRecord) || dbRecord.id, null, buildExitExtraData(dbRecord), dbRecord);
                 if (didExit) resetForm();
                 return;
               }
+            } else {
+              const reallyOnline = await checkOnlineStatus();
+              if (reallyOnline) {
+                const col = mainTab === 'vehicle' ? 'plate' : 'name';
+                let dbQuery = supabase
+                  .from('security_logs')
+                  .select('*')
+                  .is('exit_at', null)
+                  .eq(col, rawIdentifier.toUpperCase());
+                if (expectedSubCategory) {
+                  dbQuery = dbQuery.ilike('sub_category', `${expectedSubCategory}%`);
+                }
+                const { data: dbMatches } = await dbQuery;
+                if (dbMatches && dbMatches.length === 1) {
+                  const dbRecord = dbMatches[0];
+                  applyLocalLogUpsert(dbRecord, { includeInActive: true });
+                  const didExit = await handleExit(getLogBindingId(dbRecord) || dbRecord.id, null, buildExitExtraData(dbRecord), dbRecord);
+                  if (didExit) resetForm();
+                  return;
+                }
+              }
             }
+          } catch (_dbCheckErr) {
+            // DB kontrol hatası — yeni çıkış kaydı oluşturmaya devam et
           }
-        } catch (_dbCheckErr) {
-          // DB kontrol hatası — yeni çıkış kaydı oluşturmaya devam et
+          const exitLocationKeyPart = shouldShowVehicleExitLocation ? sanitizeInput(formData.exit_location) : '';
+          const independentExitKey = `${mainTab}|${vehicleSubTab}|${visitorSubTab}|${normalizedExitIdentifier}|${exitLocationKeyPart}`;
+          if (independentExitConfirmRef.current !== independentExitKey) {
+            const confirmation = buildIndependentExitConfirmation(normalizedExitIdentifier || 'Bu araç');
+            setConfirmModal({
+              isOpen: true,
+              title: confirmation.title,
+              message: confirmation.message,
+              type: 'warning',
+              confirmLabel: 'Yine de Çıkış Yap',
+              cancelLabel: 'Vazgeç',
+              onConfirm: async () => {
+                setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                independentExitConfirmRef.current = independentExitKey;
+                await handleEntry();
+              }
+            });
+            return;
+          }
+          independentExitConfirmRef.current = '';
+          // Aktif kayıt bulunamadı — giriş kaydı olmadan bağımsız çıkış kaydı oluşturulacak
         }
-        const exitLocationKeyPart = shouldShowVehicleExitLocation ? sanitizeInput(formData.exit_location) : '';
-        const independentExitKey = `${mainTab}|${vehicleSubTab}|${visitorSubTab}|${normalizedExitIdentifier}|${exitLocationKeyPart}`;
-        if (independentExitConfirmRef.current !== independentExitKey) {
-          const confirmation = buildIndependentExitConfirmation(normalizedExitIdentifier || 'Bu araç');
-          setConfirmModal({
-            isOpen: true,
-            title: confirmation.title,
-            message: confirmation.message,
-            type: 'warning',
-            confirmLabel: 'Yine de Çıkış Yap',
-            cancelLabel: 'Vazgeç',
-            onConfirm: async () => {
-              setConfirmModal(prev => ({ ...prev, isOpen: false }));
-              independentExitConfirmRef.current = independentExitKey;
-              await handleEntry();
-            }
-          });
-          return;
-        }
-        independentExitConfirmRef.current = '';
-        // Aktif kayıt bulunamadı — giriş kaydı olmadan bağımsız çıkış kaydı oluşturulacak
       }
     }
 
@@ -2172,7 +2171,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }), [mainTab, vehicleSubTab, visitorSubTab, vehicleDirection, formData, shouldShowVehicleExitLocation, selectedExitLogId, activeLogs, allLogs, currentShift, session, checkOnlineStatus, saveToOfflineQueue, resetForm, fetchData, showToast, handleExit, applyLocalLogUpsert, optionalAttachmentsEnabled, entryAttachments, addAttachmentsToLog]);
+  }), [mainTab, vehicleSubTab, visitorSubTab, vehicleDirection, formData, independentExitMode, shouldShowVehicleExitLocation, selectedExitLogId, activeLogs, allLogs, currentShift, session, checkOnlineStatus, saveToOfflineQueue, resetForm, fetchData, showToast, handleExit, applyLocalLogUpsert, optionalAttachmentsEnabled, entryAttachments, addAttachmentsToLog]);
 
   const confirmSealedExit = useCallback(async () => {
     if (!exitSealNumber?.trim()) return showToast("Lütfen Çıkış Mühür Numarasını Giriniz!", "error");
@@ -2319,7 +2318,13 @@ export default function App() {
   }, [email, password]);
 
   const _handleLogout = useCallback(async () => { // eslint-disable-line no-unused-vars
-    try { await supabase.auth.signOut(); setEmail(""); setPassword(""); } catch (error) { }
+    try {
+      await supabase.auth.signOut();
+      setEmail("");
+      setPassword("");
+    } catch (error) {
+      console.warn('Supabase signOut failed:', error);
+    }
   }, []);
 
   const handleQuickExit = useCallback(async (log) => {
@@ -2575,7 +2580,6 @@ export default function App() {
   const exportToExcel = useCallback(async () => {
     try {
       if (filteredLogs.length === 0) return showToast("Veri yok", "error");
-      const XLSX = await loadXlsx();
       const exportData = filteredLogs.map(log => ({
         Tarih: formatTrDate(log.created_at), Vardiya: log.shift, Kategori: log.sub_category,
         'Plaka/İsim': log.plate || log.name, 'Sürücü': log.driver || '-', 'İlgili Birim': log.host,
@@ -2584,15 +2588,12 @@ export default function App() {
         'Giriş Saati': formatTrTime(log.created_at, { hour: '2-digit', minute: '2-digit' }),
         'Çıkış Saati': log.exit_at ? formatTrTime(log.exit_at, { hour: '2-digit', minute: '2-digit' }) : 'İÇERİDE'
       }));
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Rapor");
-      XLSX.writeFile(wb, `Guvenlik_Raporu_${formatTrDate(new Date()).replace(/\./g, '-')}.xlsx`);
+      await writeRowsToExcelFile(exportData, 'Rapor', `Guvenlik_Raporu_${formatTrDate(new Date()).replace(/\./g, '-')}.xlsx`);
       showToast("Excel dosyası indirildi!", "success");
     } catch (error) {
       showToast("Excel oluşturma hatası!", "error");
     }
-  }, [filteredLogs, loadXlsx, showToast]);
+  }, [filteredLogs, showToast]);
 
 const sendDailyReport = useCallback((dateParam) => {
     setConfirmModal({
@@ -2654,12 +2655,8 @@ const sendDailyReport = useCallback((dateParam) => {
               'Aciklama': log.note || '-'
             }));
 
-            const XLSX = await loadXlsx();
-            const ws = XLSX.utils.json_to_sheet(reportData);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "NewSecurityy Raporu");
             const fileName = `NewSecurityy_Raporu_${dateParam}.xlsx`;
-            XLSX.writeFile(wb, fileName);
+            await writeRowsToExcelFile(reportData, 'NewSecurityy Raporu', fileName);
 
             showToast(`✅ ${reportLogs.length} kayıtlı rapor indirildi!`, "success");
           }
@@ -2671,7 +2668,7 @@ const sendDailyReport = useCallback((dateParam) => {
         }
       }
     });
-  }, [allLogs, loadXlsx, showToast]);
+  }, [allLogs, showToast]);
 
   const hostOptions = useMemo(
     () => showHistoryPanel ? Array.from(new Set(filteredLogs.map((log) => log.host).filter(Boolean))) : [],
@@ -3320,7 +3317,10 @@ const sendDailyReport = useCallback((dateParam) => {
     if (currentPage === 'audit' && isDeveloperRole) {
       loadServerAuditLogs();
     }
-  }, [currentPage, isDeveloperRole, loadServerAuditLogs]);
+    if (currentPage === 'enterprise' && isDeveloperRole && localApiToken) {
+      loadServerAuditLogs();
+    }
+  }, [currentPage, isDeveloperRole, loadServerAuditLogs, localApiToken]);
 
   const checkHistory = useCallback(async (searchValue, type) => {
     if (!searchValue || searchValue.length < 3) { setPlateHistory(null); return; }
@@ -3346,8 +3346,12 @@ const sendDailyReport = useCallback((dateParam) => {
     try {
       const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleTE8teleTE8teleTE8teleTE8teleTE8teleTE8teleTE8teleTE8teleTDN');
       audio.volume = 0.5;
-      audio.play().catch(() => { });
-    } catch (e) { }
+      audio.play().catch((error) => {
+        console.warn('Notification sound playback failed:', error);
+      });
+    } catch (error) {
+      console.warn('Notification sound setup failed:', error);
+    }
   }, [soundEnabled]);
 
   useEffect(() => {
@@ -4551,12 +4555,13 @@ const sendDailyReport = useCallback((dateParam) => {
     const clockStr = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const dateStr = now.toLocaleDateString('tr-TR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
     return (
-      <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
+      <div id="main-content" className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
+        <a href="#main-content" className="skip-link">Ana içeriğe atla</a>
         <header className="ui-header mb-4">
           <div className="flex items-center gap-3">
             <img src={logoImg} alt="Malhotra" className="h-9 w-auto object-contain" />
             <div>
-              <h1 className="text-base font-semibold tracking-tight">Malhotra Güvenlik Paneli</h1>
+              <h2 className="text-base font-semibold tracking-tight">Malhotra Güvenlik Paneli</h2>
               <div className="flex items-center gap-2 text-[11px] text-zinc-400">
                 {isOnline ? <span className="text-emerald-400 flex items-center gap-1"><Wifi size={11} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={11} /> Offline</span>}
                 {totalQueueCount > 0 && (
@@ -4571,10 +4576,10 @@ const sendDailyReport = useCallback((dateParam) => {
               <div className="text-[10px] text-zinc-500">{dateStr}</div>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-            <button onClick={handleSystemReset} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Sistemi yenile">
+            <button onClick={handleSystemReset} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Sistemi yenile" aria-label="Sistemi yenile">
               <RefreshCw size={14} />
             </button>
-            <button onClick={recomputeActiveLogs} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Aktifleri yenile">
+            <button onClick={recomputeActiveLogs} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Aktifleri yenile" aria-label="Aktif logları yenile">
               <RotateCcw size={14} />
             </button>
             {canUseSecurityPanel && (
@@ -4582,6 +4587,12 @@ const sendDailyReport = useCallback((dateParam) => {
                 <Upload size={14} /> Veri Yükle
               </Button>
             )}
+            <Button onClick={() => setCurrentPage('photo-realism')} variant="secondary" size="sm" className="gap-1.5">
+              <Camera size={14} /> Görsel İyileştirme
+            </Button>
+            <Button onClick={() => setCurrentPage('enterprise')} variant="secondary" size="sm" className="gap-1.5">
+              <ShieldCheck size={14} /> Enterprise Center
+            </Button>
             {canUseSecurityPanel && (
               <Button onClick={() => setCurrentPage('main')} variant="primary" size="sm" className="gap-1.5">
                 <LogIn size={14} /> Giriş Paneli
@@ -4621,12 +4632,13 @@ const sendDailyReport = useCallback((dateParam) => {
 
         <main className="mb-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
-            <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-2"><BarChart3 className="text-blue-400" size={16} /> Dashboard</h2>
+            <h1 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-2"><BarChart3 className="text-blue-400" size={16} /> Dashboard</h1>
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={() => setSoundEnabled(!soundEnabled)}
                 variant="ghost"
                 className={`gap-2 ${soundEnabled ? 'bg-emerald-500/20 text-emerald-200' : 'text-muted-foreground'}`}
+                aria-label={soundEnabled ? 'Sesi kapat' : 'Sesi aç'}
               >
                 {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
               </Button>
@@ -4694,7 +4706,7 @@ const sendDailyReport = useCallback((dateParam) => {
           ) : (
             <div className="ui-card p-4 mb-4">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
-                <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-2"><Zap size={14} className="text-blue-400" /> Sync Durumu</h3>
+                <h2 className="text-xs font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-2"><Zap size={14} className="text-blue-400" /> Sync Durumu</h2>
                 <div className="flex gap-1.5">
                   <Button onClick={handleManualSync} variant="secondary" size="sm" className="gap-1.5 text-xs">
                     <RefreshCw size={13} /> Eşitle
@@ -4775,7 +4787,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
               {isElectron && (
                 <div className="mt-4 border-t border-zinc-700 pt-4">
-                  <div className="text-sm text-zinc-400 mb-2">Lokal -> Supabase</div>
+                  <div className="text-sm text-zinc-400 mb-2">Lokal {'->'} Supabase</div>
                   <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
                     <Button onClick={handleExportLocalToSupabase} variant="secondary" className="gap-2" disabled={bulkExportState.running}>
                       {bulkExportState.running ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
@@ -4889,7 +4901,7 @@ const sendDailyReport = useCallback((dateParam) => {
             ) : (
               <div className="ui-card p-4 mb-4">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
-                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-2"><Mail size={14} className="text-blue-400" /> E-posta (SMTP)</h3>
+                  <h2 className="text-xs font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-2"><Mail size={14} className="text-blue-400" /> E-posta (SMTP)</h2>
                   <div className="flex gap-1.5">
                     <Button onClick={handleTestSmtp} variant="secondary" size="sm" className="gap-1.5 text-xs">
                       <CheckCircle size={13} /> Test
@@ -5045,7 +5057,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {!liteMode && isElectron && (
             <div className="ui-card p-4 mb-6">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-                <h3 className="text-lg font-bold flex items-center gap-2"><FileText className="text-green-400" /> Yedekleme</h3>
+                <h2 className="text-lg font-bold flex items-center gap-2"><FileText className="text-green-400" /> Yedekleme</h2>
                 <div className="flex gap-2">
                   <Button onClick={handleBackupNow} variant="secondary" size="sm" className="gap-2">
                     <CheckCircle size={16} /> Yedek Al
@@ -5209,7 +5221,7 @@ const sendDailyReport = useCallback((dateParam) => {
           <>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="ui-card p-4">
-              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Clock className="text-blue-400" size={14} /> Bugün Detay</h3>
+              <h2 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Clock className="text-blue-400" size={14} /> Bugün Detay</h2>
               <div className="space-y-2">
                 <div className="flex justify-between items-center p-2.5 bg-black/30 rounded border border-zinc-700/30">
                   <span className="flex items-center gap-2 text-sm"><Car className="text-blue-400" size={16} /> Araç Girişi</span>
@@ -5223,7 +5235,7 @@ const sendDailyReport = useCallback((dateParam) => {
             </div>
 
             <div className="ui-card p-4">
-              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><PieChart className="text-emerald-400" size={14} /> Kategori Dağılımı</h3>
+              <h2 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><PieChart className="text-emerald-400" size={14} /> Kategori Dağılımı</h2>
               <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
                 {Object.entries(stats.categoryStats).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([cat, count]) => {
                   const total = Object.values(stats.categoryStats).reduce((a, b) => a + b, 0);
@@ -5240,7 +5252,7 @@ const sendDailyReport = useCallback((dateParam) => {
             </div>
 
             <div className="ui-card p-4">
-              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><TrendingUp className="text-blue-400" size={14} /> Son 7 Gün</h3>
+              <h2 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><TrendingUp className="text-blue-400" size={14} /> Son 7 Gün</h2>
               <div className="flex items-end justify-between h-[150px] gap-1.5">
                 {stats.dailyStats.map((day, idx) => {
                   const maxCount = Math.max(...stats.dailyStats.map(d => d.count), 1);
@@ -5258,7 +5270,7 @@ const sendDailyReport = useCallback((dateParam) => {
           </div>
 
           <div className="mt-4 ui-card p-4">
-            <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Layers className="text-blue-400" size={14} /> Bugünkü Vardiya Dağılımı</h3>
+            <h2 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Layers className="text-blue-400" size={14} /> Bugünkü Vardiya Dağılımı</h2>
             <div className="grid grid-cols-3 gap-3">
               {['Vardiya 1 (08:00-16:00)', 'Vardiya 2 (16:00-00:00)', 'Vardiya 3 (00:00-08:00)'].map(shift => {
                 const isActive = currentShift === shift;
@@ -5276,7 +5288,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <div className="ui-card p-4">
-              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Star className="text-amber-400" size={14} /> Sık Gelen Araç/Ziyaretçiler</h3>
+              <h2 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Star className="text-amber-400" size={14} /> Sık Gelen Araç/Ziyaretçiler</h2>
               <div className="space-y-1.5 max-h-[300px] overflow-y-auto">
                 {frequentVisitors.length > 0 ? frequentVisitors.map((visitor, idx) => (
                   <div key={idx} className="flex items-center justify-between p-2.5 bg-black/20 rounded border border-zinc-700/20 hover:border-zinc-600/40 transition-all group">
@@ -5286,7 +5298,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="text-right"><p className="font-bold text-blue-400 text-sm tabular-nums">{visitor.count}x</p><p className="text-[9px] text-zinc-500">Son: {formatTrDate(visitor.lastVisit)}</p></div>
-                      <button onClick={() => quickEntry(visitor.key, visitor.category, visitor.host)} className="opacity-0 group-hover:opacity-100 bg-emerald-600 hover:bg-emerald-500 text-white p-1.5 rounded transition-all" title="Hızlı Giriş"><Zap size={12} /></button>
+                      <button onClick={() => quickEntry(visitor.key, visitor.category, visitor.host)} className="table-action-btn opacity-0 group-hover:opacity-100 bg-emerald-600 hover:bg-emerald-500 text-white p-1.5 rounded transition-all" title="Hızlı Giriş" aria-label={`${visitor.label} için hızlı giriş yap`}><Zap size={12} /></button>
                     </div>
                   </div>
                 )) : <div className="ui-empty">Henüz yeterli veri yok</div>}
@@ -5294,7 +5306,7 @@ const sendDailyReport = useCallback((dateParam) => {
             </div>
 
             <div className="ui-card p-4">
-              <h3 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Zap className="text-emerald-400" size={14} /> Hızlı İşlemler</h3>
+              <h2 className="text-sm font-bold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider"><Zap className="text-emerald-400" size={14} /> Hızlı İşlemler</h2>
               <div className="space-y-4">
                 <div className="ui-panel-lg">
                   <div className="flex justify-between items-center mb-3"><span className="text-zinc-400 text-sm">Şu an içeride</span><span className="text-2xl font-bold text-green-400">{activeLogs.length}</span></div>
@@ -5436,7 +5448,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 <input
                   id="csv-import-file"
                   type="file"
-                  accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                   className="ui-input"
                   onChange={handleImportFileChange}
                   disabled={importing}
@@ -5506,6 +5518,88 @@ const sendDailyReport = useCallback((dateParam) => {
     );
   }
 
+  // === PHOTO REALISM ===
+  if (currentPage === 'photo-realism') {
+    return (
+      <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
+        <header className="ui-header mb-6">
+          <div className="flex items-center gap-3">
+            <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
+            <div>
+              <h1 className="text-xl font-bold">Görsel İyileştirme</h1>
+              <div className="text-[10px] text-zinc-500">Build: {BUILD_TIME}</div>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={() => setCurrentPage('dashboard')} variant="secondary" className="gap-2">
+              <BarChart3 size={16} /> Dashboard
+            </Button>
+            <Button onClick={() => setCurrentPage('enterprise')} variant="secondary" className="gap-2">
+              <ShieldCheck size={16} /> Enterprise Center
+            </Button>
+            {canUseSecurityPanel && (
+              <Button onClick={() => setCurrentPage('main')} variant="primary" className="gap-2">
+                <LogIn size={16} /> Giriş Paneli
+              </Button>
+            )}
+          </div>
+        </header>
+
+        <React.Suspense fallback={<div className="ui-status">Görsel iyileştirme aracı yükleniyor.</div>}>
+          <PhotoRealismTool canUseLocalApi={canUseImageProcessingApi} localApiFetch={localApiFetch} />
+        </React.Suspense>
+      </div>
+    );
+  }
+
+  // === ENTERPRISE CENTER ===
+  if (currentPage === 'enterprise') {
+    return (
+      <div className={cx("min-h-screen app-shell app-container text-foreground font-sans p-2 md:p-4", liteMode && "lite-mode")}>
+        <header className="ui-header mb-6">
+          <div className="flex items-center gap-3">
+            <img src={logoImg} alt="Malhotra" className="h-12 w-auto object-contain" />
+            <div>
+              <h1 className="text-xl font-bold">Enterprise Center</h1>
+              <div className="text-xs text-zinc-400">{session?.user?.username || session?.user?.email} | {activeRole}</div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setCurrentPage('dashboard')} variant="secondary" className="gap-2">
+              <BarChart3 size={16} /> Dashboard
+            </Button>
+            <Button onClick={() => setCurrentPage('photo-realism')} variant="secondary" className="gap-2">
+              <Camera size={16} /> Görsel İyileştirme
+            </Button>
+            {canUseSecurityPanel && (
+              <Button onClick={() => setCurrentPage('main')} variant="primary" className="gap-2">
+                <LogIn size={16} /> Giriş Paneli
+              </Button>
+            )}
+            {isDeveloperRole && (
+              <Button onClick={() => setCurrentPage('audit')} variant="secondary" className="gap-2">
+                <History size={16} /> Audit
+              </Button>
+            )}
+          </div>
+        </header>
+
+        <React.Suspense fallback={<div className="ui-status">Enterprise Center yükleniyor.</div>}>
+          <EnterpriseCenter
+            auditLogs={auditLogs}
+            serverAuditLogs={serverAuditLogs}
+            serverAuditLoading={serverAuditLoading}
+            onRefreshAuditLogs={loadServerAuditLogs}
+            canRefreshAuditLogs={isDeveloperRole && Boolean(localApiToken?.trim())}
+            localApiUrl={localApiUrl?.trim() ? localApiUrl.trim() : ''}
+            session={session}
+            activeRole={activeRole}
+          />
+        </React.Suspense>
+      </div>
+    );
+  }
+
   // === AUDIT ===
   if (currentPage === 'audit') {
     return (
@@ -5521,6 +5615,9 @@ const sendDailyReport = useCallback((dateParam) => {
           <div className="flex gap-2">
             <Button onClick={() => setCurrentPage('dashboard')} variant="secondary" className="gap-2">
               <BarChart3 size={16} /> Dashboard
+            </Button>
+            <Button onClick={() => setCurrentPage('enterprise')} variant="secondary" className="gap-2">
+              <ShieldCheck size={16} /> Enterprise Center
             </Button>
             <Button onClick={loadServerAuditLogs} variant="primary" className="gap-2" disabled={serverAuditLoading}>
               {serverAuditLoading ? <RefreshCw size={14} className="animate-spin" /> : <History size={14} />} Sunucu Loglarını Yenile
@@ -5543,7 +5640,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
         <main className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="p-4">
-            <h3 className="text-lg font-bold mb-3">Uygulama İşlem Logları</h3>
+            <h2 className="text-lg font-bold mb-3">Uygulama İşlem Logları</h2>
             {enhancedAuditEnabled && (
               <div className="ui-panel mb-3">
                 <div className="flex flex-col md:flex-row md:items-center gap-2">
@@ -5582,7 +5679,7 @@ const sendDailyReport = useCallback((dateParam) => {
           </Card>
 
           <Card className="p-4">
-            <h3 className="text-lg font-bold mb-3">Sunucu Audit Logları</h3>
+            <h2 className="text-lg font-bold mb-3">Sunucu Audit Logları</h2>
             <div className="max-h-[520px] overflow-y-auto space-y-2">
               {serverAuditLogs.map((item) => (
                 <div key={item.id} className="ui-panel text-xs">
@@ -5670,7 +5767,7 @@ const sendDailyReport = useCallback((dateParam) => {
           <Card className="p-4">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
               <div>
-                <h3 className="text-lg font-bold">Yerel API Kimlik</h3>
+                <h2 className="text-lg font-bold">Yerel API Kimlik</h2>
                 <p className="text-xs text-zinc-400">JWT token ile HR API'lerine erişim.</p>
               </div>
               <div className="text-xs text-zinc-500">Token: {localApiToken ? 'Hazır' : 'Yok'}</div>
@@ -5738,7 +5835,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'people' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">Yeni Personel</h3>
+                <h2 className="text-lg font-bold mb-3">Yeni Personel</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <FormField label="Ad Soyad">
                     <input className="ui-input" value={personDraft.full_name} onChange={(e) => setPersonDraft({ ...personDraft, full_name: e.target.value })} placeholder="Ad Soyad" />
@@ -5767,7 +5864,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
               <Card className="p-4">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
-                  <h3 className="text-lg font-bold">Personel Listesi</h3>
+                  <h2 className="text-lg font-bold">Personel Listesi</h2>
                   <div className="flex gap-2">
                     <input className="ui-input" value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Ad, TC veya telefon ara" />
                     <Button onClick={() => loadPeople()} size="sm" variant="secondary">Ara</Button>
@@ -5816,6 +5913,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                 }}
                                 className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
                                 title="Düzenle"
+                                aria-label="Personeli düzenle"
                               >
                                 <Edit size={14} />
                               </button>
@@ -5824,6 +5922,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                 onClick={() => setPersonActiveState(person, !person.is_active)}
                                 className="text-amber-400 hover:text-amber-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
                                 title={person.is_active ? 'Pasife al' : 'Aktif et'}
+                                aria-label={person.is_active ? 'Personeli pasife al' : 'Personeli aktif et'}
                               >
                                 {person.is_active ? <UserMinus size={14} /> : <UserCheck size={14} />}
                               </button>
@@ -5844,7 +5943,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'badges' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">Yeni Badge</h3>
+                <h2 className="text-lg font-bold mb-3">Yeni Badge</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <FormField label="Personel">
                     <select className="ui-input" value={badgeDraft.person} onChange={(e) => setBadgeDraft({ ...badgeDraft, person: e.target.value })}>
@@ -5876,7 +5975,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
               <Card className="p-4">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
-                  <h3 className="text-lg font-bold">Badge Listesi</h3>
+                  <h2 className="text-lg font-bold">Badge Listesi</h2>
                   <div className="flex gap-2">
                     <input className="ui-input" value={badgeQuery} onChange={(e) => setBadgeQuery(e.target.value)} placeholder="Kod veya personel ara" />
                     <Button onClick={() => loadBadges()} size="sm" variant="secondary">Ara</Button>
@@ -5915,6 +6014,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                 }}
                                 className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
                                 title="Düzenle"
+                                aria-label="Rozeti düzenle"
                               >
                                 <Edit size={14} />
                               </button>
@@ -5923,6 +6023,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                 onClick={() => setBadgeActiveState(badge, !badge.is_active)}
                                 className="text-amber-400 hover:text-amber-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
                                 title={badge.is_active ? 'Pasife al' : 'Aktif et'}
+                                aria-label={badge.is_active ? 'Rozeti pasife al' : 'Rozeti aktif et'}
                               >
                                 {badge.is_active ? <UserMinus size={14} /> : <UserCheck size={14} />}
                               </button>
@@ -5943,7 +6044,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'host-presets' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">Yeni Host Preset</h3>
+                <h2 className="text-lg font-bold mb-3">Yeni Host Preset</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <FormField label="Ad">
                     <input className="ui-input" value={hostPresetDraft.name} onChange={(e) => setHostPresetDraft({ ...hostPresetDraft, name: e.target.value })} placeholder="Yonetim, Satin Alma..." />
@@ -5963,7 +6064,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
               <Card className="p-4">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
-                  <h3 className="text-lg font-bold">Host Preset Listesi</h3>
+                  <h2 className="text-lg font-bold">Host Preset Listesi</h2>
                   <div className="flex gap-2">
                     <input className="ui-input" value={hostPresetQuery} onChange={(e) => setHostPresetQuery(e.target.value)} placeholder="Host ara" />
                     <Button onClick={() => loadHostPresets()} size="sm" variant="secondary">Ara</Button>
@@ -5999,6 +6100,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                 }}
                                 className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
                                 title="Duzenle"
+                                aria-label="Host preset duzenle"
                               >
                                 <Edit size={14} />
                               </button>
@@ -6007,6 +6109,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                 onClick={() => setHostPresetActiveState(preset, !preset.is_active)}
                                 className="text-amber-400 hover:text-amber-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
                                 title={preset.is_active ? 'Pasife al' : 'Aktif et'}
+                                aria-label={preset.is_active ? 'Host preset pasife al' : 'Host preset aktif et'}
                               >
                                 {preset.is_active ? <UserMinus size={14} /> : <UserCheck size={14} />}
                               </button>
@@ -6027,7 +6130,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'vehicle-presets' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">Yeni Arac Preset</h3>
+                <h2 className="text-lg font-bold mb-3">Yeni Arac Preset</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <FormField label="Plaka">
                     <input className="ui-input uppercase font-mono" value={vehiclePresetDraft.plate} onChange={(e) => setVehiclePresetDraft({ ...vehiclePresetDraft, plate: e.target.value.toUpperCase() })} placeholder="34 ABC 123" />
@@ -6062,7 +6165,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
               <Card className="p-4">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
-                  <h3 className="text-lg font-bold">Arac Preset Listesi</h3>
+                  <h2 className="text-lg font-bold">Arac Preset Listesi</h2>
                   <div className="flex gap-2">
                     <input className="ui-input" value={vehiclePresetQuery} onChange={(e) => setVehiclePresetQuery(e.target.value)} placeholder="Plaka veya etiket ara" />
                     <Button onClick={() => loadVehiclePresets()} size="sm" variant="secondary">Ara</Button>
@@ -6103,6 +6206,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                 }}
                                 className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
                                 title="Duzenle"
+                                aria-label="Araç preset duzenle"
                               >
                                 <Edit size={14} />
                               </button>
@@ -6111,6 +6215,7 @@ const sendDailyReport = useCallback((dateParam) => {
                                 onClick={() => setVehiclePresetActiveState(preset, !preset.is_active)}
                                 className="text-amber-400 hover:text-amber-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"
                                 title={preset.is_active ? 'Pasife al' : 'Aktif et'}
+                                aria-label={preset.is_active ? 'Araç preset pasife al' : 'Araç preset aktif et'}
                               >
                                 {preset.is_active ? <UserMinus size={14} /> : <UserCheck size={14} />}
                               </button>
@@ -6131,7 +6236,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'absence-types' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-4">Yeni Tür</h3>
+                <h2 className="text-lg font-bold mb-4">Yeni Tür</h2>
                 <div className="space-y-3">
                   <FormField label="Tür Adı">
                     <input className="ui-input" value={absenceTypeDraft.name} onChange={(e) => setAbsenceTypeDraft({ ...absenceTypeDraft, name: e.target.value })} />
@@ -6166,7 +6271,7 @@ const sendDailyReport = useCallback((dateParam) => {
               </Card>
               <Card className="p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-lg font-bold">Tür Listesi</h3>
+                  <h2 className="text-lg font-bold">Tür Listesi</h2>
                   <Button onClick={loadAbsenceTypes} size="sm" variant="secondary">Yenile</Button>
                 </div>
                 <div className="ui-table-wrap max-h-[360px]">
@@ -6201,7 +6306,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'absence-records' && (
             <div className="space-y-6">
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">Yeni Devamsızlık Kaydı</h3>
+                <h2 className="text-lg font-bold mb-3">Yeni Devamsızlık Kaydı</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <FormField label="Personel">
                     <select className="ui-input" value={absenceRecordDraft.person} onChange={(e) => setAbsenceRecordDraft({ ...absenceRecordDraft, person: e.target.value })}>
@@ -6246,7 +6351,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
               <Card className="p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-lg font-bold">Kayıtlar</h3>
+                  <h2 className="text-lg font-bold">Kayıtlar</h2>
                   <Button onClick={loadAbsenceRecords} size="sm" variant="secondary">Yenile</Button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
@@ -6298,7 +6403,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'shifts' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">Yeni Vardiya</h3>
+                <h2 className="text-lg font-bold mb-3">Yeni Vardiya</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <FormField label="Ad">
                     <input className="ui-input" value={shiftDraft.name} onChange={(e) => setShiftDraft({ ...shiftDraft, name: e.target.value })} />
@@ -6332,7 +6437,7 @@ const sendDailyReport = useCallback((dateParam) => {
               </Card>
               <Card className="p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-lg font-bold">Vardiya Listesi</h3>
+                  <h2 className="text-lg font-bold">Vardiya Listesi</h2>
                   <Button onClick={loadWorkShifts} size="sm" variant="secondary">Yenile</Button>
                 </div>
                 <div className="ui-table-wrap max-h-[360px]">
@@ -6365,7 +6470,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'assignments' && (
             <div className="space-y-6">
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">Vardiya Atama</h3>
+                <h2 className="text-lg font-bold mb-3">Vardiya Atama</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <FormField label="Personel">
                     <select className="ui-input" value={assignmentDraft.person} onChange={(e) => setAssignmentDraft({ ...assignmentDraft, person: e.target.value })}>
@@ -6397,7 +6502,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
               <Card className="p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-lg font-bold">Atamalar</h3>
+                  <h2 className="text-lg font-bold">Atamalar</h2>
                   <Button onClick={loadShiftAssignments} size="sm" variant="secondary">Yenile</Button>
                 </div>
                 <div className="ui-table-wrap max-h-[360px]">
@@ -6432,7 +6537,7 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'attendance' && (
             <div className="space-y-6">
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">Puantaj Özeti</h3>
+                <h2 className="text-lg font-bold mb-3">Puantaj Özeti</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <FormField label="Personel">
                     <select className="ui-input" value={attendanceQuery.person_id} onChange={(e) => setAttendanceQuery({ ...attendanceQuery, person_id: e.target.value })}>
@@ -6514,7 +6619,7 @@ const sendDailyReport = useCallback((dateParam) => {
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card className="p-4">
-                  <h3 className="text-lg font-bold mb-3">Payroll Profil Oluştur</h3>
+                  <h2 className="text-lg font-bold mb-3">Payroll Profil Oluştur</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <FormField label="Personel">
                       <select className="ui-input" value={payrollProfileDraft.person} onChange={(e) => setPayrollProfileDraft({ ...payrollProfileDraft, person: e.target.value })}>
@@ -6559,7 +6664,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
                 <Card className="p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-lg font-bold">Payroll Profilleri</h3>
+                    <h2 className="text-lg font-bold">Payroll Profilleri</h2>
                     <Button onClick={loadPayrollProfiles} size="sm" variant="secondary">Yenile</Button>
                   </div>
                   <div className="ui-table-wrap max-h-[360px]">
@@ -6591,7 +6696,7 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
 
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">Bordro Özeti</h3>
+                <h2 className="text-lg font-bold mb-3">Bordro Özeti</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <FormField label="Personel (opsiyonel)">
                     <select className="ui-input" value={payrollSummaryQuery.person_id} onChange={(e) => setPayrollSummaryQuery({ ...payrollSummaryQuery, person_id: e.target.value })}>
@@ -6641,7 +6746,7 @@ const sendDailyReport = useCallback((dateParam) => {
               </Card>
 
               <Card className="p-4">
-                <h3 className="text-lg font-bold mb-3">SGK Raporu</h3>
+                <h2 className="text-lg font-bold mb-3">SGK Raporu</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <FormField label="Başlangıç">
                     <input type="date" className="ui-input" value={sgkReportQuery.date_from} onChange={(e) => setSgkReportQuery({ ...sgkReportQuery, date_from: e.target.value })} />
@@ -6687,11 +6792,12 @@ const sendDailyReport = useCallback((dateParam) => {
           {hrTab === 'access-events' && (
             <div className="space-y-4">
               <Card className="p-4">
-                <h3 className="text-sm font-semibold text-foreground mb-3">Filtrele</h3>
+                <h2 className="text-sm font-semibold text-foreground mb-3">Filtrele</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Personel</label>
+                    <label htmlFor="filter-personel" className="text-xs text-muted-foreground block mb-1">Personel</label>
                     <select
+                      id="filter-personel"
                       className="ui-input w-full text-sm"
                       value={accessEventQuery.person_id}
                       onChange={(e) => setAccessEventQuery((prev) => ({ ...prev, person_id: e.target.value }))}
@@ -6703,8 +6809,9 @@ const sendDailyReport = useCallback((dateParam) => {
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Yön</label>
+                    <label htmlFor="filter-yon" className="text-xs text-muted-foreground block mb-1">Yön</label>
                     <select
+                      id="filter-yon"
                       className="ui-input w-full text-sm"
                       value={accessEventQuery.direction}
                       onChange={(e) => setAccessEventQuery((prev) => ({ ...prev, direction: e.target.value }))}
@@ -6715,8 +6822,9 @@ const sendDailyReport = useCallback((dateParam) => {
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Tarih (Başlangıç)</label>
+                    <label htmlFor="filter-tarih-baslangic" className="text-xs text-muted-foreground block mb-1">Tarih (Başlangıç)</label>
                     <input
+                      id="filter-tarih-baslangic"
                       type="date"
                       className="ui-input w-full text-sm"
                       value={accessEventQuery.date_from}
@@ -6724,8 +6832,9 @@ const sendDailyReport = useCallback((dateParam) => {
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Tarih (Bitiş)</label>
+                    <label htmlFor="filter-tarih-bitis" className="text-xs text-muted-foreground block mb-1">Tarih (Bitiş)</label>
                     <input
+                      id="filter-tarih-bitis"
                       type="date"
                       className="ui-input w-full text-sm"
                       value={accessEventQuery.date_to}
@@ -6744,9 +6853,9 @@ const sendDailyReport = useCallback((dateParam) => {
               </Card>
 
               <Card className="p-4">
-                <h3 className="text-sm font-semibold text-foreground mb-3">
+                <h2 className="text-sm font-semibold text-foreground mb-3">
                   Erişim Geçmişi{accessEvents.length > 0 ? ` (${accessEvents.length})` : ''}
-                </h3>
+                </h2>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -6809,10 +6918,10 @@ const sendDailyReport = useCallback((dateParam) => {
             <span>{pendingCount} bekleyen kayıt</span>
           </div>
           <div className="flex gap-1.5">
-            <Button onClick={() => { localStorage.removeItem(OFFLINE_QUEUE_KEY); checkPendingData(); showToast("Kuyruk temizlendi", "info"); }} variant="destructive" size="sm" className="gap-1 text-xs">
+            <Button onClick={() => { localStorage.removeItem(OFFLINE_QUEUE_KEY); checkPendingData(); showToast("Kuyruk temizlendi", "info"); }} variant="destructive" size="sm" className="gap-1 text-xs" aria-label="Hatalı logları temizle">
               <Trash2 size={12} /> Temizle
             </Button>
-            <Button onClick={syncOfflineData} variant="secondary" size="sm" className="gap-1 text-xs">
+            <Button onClick={syncOfflineData} variant="secondary" size="sm" className="gap-1 text-xs" aria-label="Logları tekrar gönder">
               <RefreshCw size={12} /> Gönder
             </Button>
           </div>
@@ -6845,7 +6954,7 @@ const sendDailyReport = useCallback((dateParam) => {
         <div className="flex items-center gap-3">
           <img src={logoImg} alt="Malhotra" className="h-9 w-auto object-contain" />
           <div>
-            <h1 className="text-base font-semibold tracking-tight">Malhotra Güvenlik Paneli</h1>
+            <h2 className="text-base font-semibold tracking-tight">Malhotra Güvenlik Paneli</h2>
             <div className="flex items-center gap-2 text-[11px] text-zinc-400">
               {isOnline ? <span className="text-emerald-400 flex items-center gap-1"><Wifi size={11} /> Online</span> : <span className="text-red-400 flex items-center gap-1"><WifiOff size={11} /> Offline</span>}
               {totalQueueCount > 0 && (
@@ -6874,10 +6983,12 @@ const sendDailyReport = useCallback((dateParam) => {
           {longStayCount > 0 && <div className="bg-red-600/90 text-white px-2.5 py-1.5 rounded text-xs font-medium flex items-center gap-1.5 hidden md:flex"><AlertCircle size={14} /><span>{longStayCount} kişi 4+ saat</span></div>}
         </div>
         <div className="flex items-center gap-1.5">
-          <button onClick={handleSystemReset} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Sistemi yenile"><RefreshCw size={14} /></button>
-          <button onClick={recomputeActiveLogs} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Aktifleri yenile"><RotateCcw size={14} /></button>
+          <button onClick={handleSystemReset} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Sistemi yenile" aria-label="Sistemi yenile"><RefreshCw size={14} /></button>
+          <button onClick={recomputeActiveLogs} className="ui-btn-ghost px-2 py-1.5 text-xs gap-1" title="Aktifleri yenile" aria-label="Aktif logları yenile"><RotateCcw size={14} /></button>
           {!guestExitState.active && (<Button onClick={() => setCurrentPage('dashboard')} variant="secondary" size="sm" className="gap-1.5"><BarChart3 size={14} /> Dashboard</Button>)}
           {!guestExitState.active && (<Button onClick={() => setCurrentPage('import')} variant="secondary" size="sm" className="gap-1.5"><Upload size={14} /> Veri Yükle</Button>)}
+          {!guestExitState.active && (<Button onClick={() => setCurrentPage('photo-realism')} variant="secondary" size="sm" className="gap-1.5"><Camera size={14} /> Görsel İyileştirme</Button>)}
+          {!guestExitState.active && (<Button onClick={() => setCurrentPage('enterprise')} variant="secondary" size="sm" className="gap-1.5"><ShieldCheck size={14} /> Enterprise Center</Button>)}
           {guestExitState.active && (<Button onClick={closeGuestExitMode} variant="secondary" size="sm" className="gap-1.5"><Lock size={14} /> Rol Girişi</Button>)}
           {isElectron && (
             <button onClick={handleAppExit} className="ui-btn-destructive px-2.5 py-1.5 text-xs gap-1"><LogOut size={14} /> Çıkış</button>
@@ -6984,7 +7095,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
                 {(vehicleSubTab === 'management' || vehicleSubTab === 'company') && (
                   <div className="bg-purple-900/20 p-3 rounded border border-purple-500/30 animate-in fade-in slide-in-from-top-2">
-                    <label className="text-xs text-purple-300 flex items-center gap-1 mb-2 font-bold"><User size={12} /> {isExitDirection ? 'ÇIKIŞTA ARACI KULLANAN' : 'ARACI KULLANAN'}</label>
+                    <label htmlFor="araci-kullanalan" className="text-xs text-purple-300 flex items-center gap-1 mb-2 font-bold"><User size={12} /> {isExitDirection ? 'ÇIKIŞTA ARACI KULLANAN' : 'ARACI KULLANAN'}</label>
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       {canUseOwnerDriverType && (<button type="button" onClick={() => setFormData({ ...formData, driver_type: 'owner' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'owner' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Araç Sahibi</button>)}
                       <button type="button" onClick={() => setFormData({ ...formData, driver_type: 'driver', driver: 'MURAT CİK' })} className={`p-2 rounded text-sm font-bold transition-all ${formData.driver_type === 'driver' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Fabrika Şoförü</button>
@@ -6994,7 +7105,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     </div>
                     {formData.driver_type === 'manual' && (
                       <div className="space-y-2">
-                      <Input type="text" placeholder="İsim Soyisim giriniz..." value={formData.driver} onChange={e => setFormData({ ...formData, driver: upperTr(e.target.value) })} className="border-green-500/50" />
+                      <Input id="araci-kullanalan" type="text" placeholder="İsim Soyisim giriniz..." value={formData.driver} onChange={e => setFormData({ ...formData, driver: upperTr(e.target.value) })} className="border-green-500/50" />
                         <p className="text-green-400 text-xs">İsim ve soyisimi büyük harfle giriniz.</p>
                       </div>
                     )}
@@ -7008,7 +7119,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     <FormField label="SÜRÜCÜ ADI SOYADI">
                     {vehicleSubTab === 'staff' ? (
                       <div className="relative group">
-                        <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.driver || ''} onChange={(e) => { setFormData({ ...formData, driver: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} onBlur={() => setTimeout(() => setShowStaffList(false), 200)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.driver && (<button onClick={() => setFormData({ ...formData, driver: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
+                        <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.driver || ''} onChange={(e) => { setFormData({ ...formData, driver: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} onBlur={() => setTimeout(() => setShowStaffList(false), 200)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.driver && (<button onClick={() => setFormData({ ...formData, driver: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors" aria-label="Sürücü alanını temizle"><X size={18} /></button>)}</div>
                         {showStaffList && formData.driver && (
                           <div className="absolute z-50 w-full bg-zinc-800 border border-zinc-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
                             {staffDriverMatches.map((person, idx) => (
@@ -7039,18 +7150,18 @@ const sendDailyReport = useCallback((dateParam) => {
 
                 {shouldShowVehicleEntryLocation && (
                   <div className="bg-blue-900/20 p-3 rounded border border-blue-500/30 animate-in fade-in slide-in-from-top-2">
-                    <label className="text-xs text-blue-300 flex items-center gap-1 mb-1 font-bold"><MapPin size={12} /> {isEntryDirection ? 'GELDİĞİ LOKASYON (NEREDEN)' : 'GİDECEĞİ LOKASYON'}</label>
-                    <Input type="text" placeholder="Örn: Merkez Ofis, Gümrük..." value={formData.entry_location} onChange={e => setFormData({ ...formData, entry_location: e.target.value })} />
+                    <label htmlFor="geldigim-lokasyon" className="text-xs text-blue-300 flex items-center gap-1 mb-1 font-bold"><MapPin size={12} /> {isEntryDirection ? 'GELDİĞİ LOKASYON (NEREDEN)' : 'GİDECEĞİ LOKASYON'}</label>
+                    <Input id="geldigim-lokasyon" type="text" placeholder="Örn: Merkez Ofis, Gümrük..." value={formData.entry_location} onChange={e => setFormData({ ...formData, entry_location: e.target.value })} />
                   </div>
                 )}
 
                 {isExitDirection && (
                   <>
-                    <div className="bg-orange-900/20 p-3 rounded border border-orange-500/30 animate-in fade-in slide-in-from-top-2"><p className="text-orange-300 text-sm flex items-center gap-2"><AlertCircle size={16} />Plakayı girin. Araç içerideyse otomatik çıkış yapılır; giriş kaydı yoksa onay sonrası girişsiz çıkış kaydı oluşturulur.</p></div>
+                    <div className="bg-orange-900/20 p-3 rounded border border-orange-500/30 animate-in fade-in slide-in-from-top-2"><p className="text-orange-300 text-sm flex items-center gap-2"><AlertCircle size={16} />{independentExitMode ? 'Şirket aracı çıkışı hareket kaydı olarak alınır; önce aktif giriş kaydı aranmaz.' : 'Plakayı girin. Araç içerideyse otomatik çıkış yapılır; giriş kaydı yoksa onay sonrası girişsiz çıkış kaydı oluşturulur.'}</p></div>
                     {shouldShowVehicleExitLocation && (
                       <div className="bg-blue-900/20 p-3 rounded border border-blue-500/30 animate-in fade-in slide-in-from-top-2 mt-2">
-                        <label className="text-xs text-blue-300 flex items-center gap-1 mb-1 font-bold"><MapPin size={12} /> GİDECEĞİ LOKASYON</label>
-                        <Input type="text" placeholder="Nereye gidecek? Örn: Merkez Ofis, Gümrük, Depo..." value={formData.exit_location} onChange={e => setFormData({ ...formData, exit_location: e.target.value })} />
+                        <label htmlFor="gidecegim-lokasyon" className="text-xs text-blue-300 flex items-center gap-1 mb-1 font-bold"><MapPin size={12} /> GİDECEĞİ LOKASYON</label>
+                        <Input id="gidecegim-lokasyon" type="text" placeholder="Nereye gidecek? Örn: Merkez Ofis, Gümrük, Depo..." value={formData.exit_location} onChange={e => setFormData({ ...formData, exit_location: e.target.value })} />
                       </div>
                     )}
                   </>
@@ -7106,7 +7217,7 @@ const sendDailyReport = useCallback((dateParam) => {
                 <FormField label="ADI SOYADI">
                 {visitorSubTab === 'staff' ? (
                   <div className="relative group">
-                    <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.name || ''} onChange={(e) => { setFormData({ ...formData, name: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} onBlur={() => setTimeout(() => setShowStaffList(false), 200)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.name && (<button onClick={() => setFormData({ ...formData, name: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors"><X size={18} /></button>)}</div>
+                    <div className="relative"><Input type="text" placeholder="Personel Adı Ara veya Seç..." value={formData.name || ''} onChange={(e) => { setFormData({ ...formData, name: upperTr(e.target.value) }); setShowStaffList(true); }} onFocus={() => setShowStaffList(true)} onBlur={() => setTimeout(() => setShowStaffList(false), 200)} className="pl-10 border-blue-500/50 focus:bg-zinc-800" autoComplete="off" /><Search className="absolute left-3 top-3 text-blue-400" size={18} />{formData.name && (<button onClick={() => setFormData({ ...formData, name: '' })} className="absolute right-3 top-3 text-zinc-500 hover:text-red-400 transition-colors" aria-label="İsim alanını temizle"><X size={18} /></button>)}</div>
                     {showStaffList && formData.name && (
                       <div className="absolute z-50 w-full bg-zinc-800 border border-zinc-600 rounded-b-xl shadow-2xl max-h-60 overflow-y-auto mt-1">
                         {staffVisitorMatches.map((person, idx) => (
@@ -7143,7 +7254,7 @@ const sendDailyReport = useCallback((dateParam) => {
               </div>
             )}
 
-            {isExitDirection && (
+            {isExitDirection && !independentExitMode && (
               <div className="ui-panel">
                 <FormField
                   label="AKTİF ÇIKIŞ KAYDI"
@@ -7339,11 +7450,7 @@ const sendDailyReport = useCallback((dateParam) => {
                     'İlgili Birim': log.host,
                     Vardiya: log.shift
                   }));
-                  const XLSX = await loadXlsx();
-                  const ws = XLSX.utils.json_to_sheet(todayData);
-                  const wb = XLSX.utils.book_new();
-                  XLSX.utils.book_append_sheet(wb, ws, 'Bugünkü Hareketler');
-                  XLSX.writeFile(wb, `Bugunun_Hareketleri_${today}.xlsx`);
+                  await writeRowsToExcelFile(todayData, 'Bugünkü Hareketler', `Bugunun_Hareketleri_${today}.xlsx`);
                   showToast('Excel dosyası indirildi!', 'success');
                 }}
                 className="ui-btn-secondary px-2.5 py-1.5 text-xs gap-1"
@@ -7359,7 +7466,12 @@ const sendDailyReport = useCallback((dateParam) => {
 
           {/* DETAYLI İSTATİSTİK KARTLARI */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-            <div onClick={() => handleCardClick('entry')} className="ui-kpi cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-emerald-500">
+            <button
+              type="button"
+              onClick={() => handleCardClick('entry')}
+              className="ui-kpi w-full text-left cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-emerald-500 bg-transparent p-0"
+              aria-label="Giriş kartı: Bugün {todayCounts.entry} giriş kaydı. Tıklayarak geçmişi görüntüleyin."
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Giriş</div>
@@ -7367,9 +7479,14 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
                 <ArrowRightCircle size={18} className="text-emerald-500/40" />
               </div>
-            </div>
+            </button>
 
-            <div onClick={() => handleCardClick('exit')} className="ui-kpi cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-red-500">
+            <button
+              type="button"
+              onClick={() => handleCardClick('exit')}
+              className="ui-kpi w-full text-left cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-red-500 bg-transparent p-0"
+              aria-label="Çıkış kartı: Bugün {todayCounts.exit} çıkış kaydı. Tıklayarak geçmişi görüntüleyin."
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Çıkış</div>
@@ -7377,9 +7494,14 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
                 <ArrowLeftCircle size={18} className="text-red-500/40" />
               </div>
-            </div>
+            </button>
 
-            <div onClick={() => handleCardClick('inside')} className="ui-kpi cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-blue-500">
+            <button
+              type="button"
+              onClick={() => handleCardClick('inside')}
+              className="ui-kpi w-full text-left cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-blue-500 bg-transparent p-0"
+              aria-label="İçeride kartı: Şu anda {activeLogs.length} kişi içeride. Tıklayarak geçmişi görüntüleyin."
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">İçeride</div>
@@ -7387,9 +7509,14 @@ const sendDailyReport = useCallback((dateParam) => {
                 </div>
                 <Activity size={18} className="text-blue-500/40" />
               </div>
-            </div>
+            </button>
 
-            <div onClick={() => handleCardClick('avgDuration')} className="ui-kpi cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-zinc-500">
+            <button
+              type="button"
+              onClick={() => handleCardClick('avgDuration')}
+              className="ui-kpi w-full text-left cursor-pointer hover:bg-card/90 transition-colors border-l-2 border-l-zinc-500 bg-transparent p-0"
+              aria-label={`Ortalama süre kartı: ${todayDetailedStats.avgWaitMinutes > 0 ? `${Math.floor(todayDetailedStats.avgWaitMinutes / 60)} saat ${todayDetailedStats.avgWaitMinutes % 60} dakika` : 'Veri yok'}. Tıklayarak geçmişi görüntüleyin.`}
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Ort. Süre</div>
@@ -7405,7 +7532,7 @@ const sendDailyReport = useCallback((dateParam) => {
               <div className="text-[10px] text-zinc-500 mt-1">
                 {todayDetailedStats.completedCount} tamamlanan
               </div>
-            </div>
+            </button>
           </div>
 
           {/* VARDİYA BAZLI GÖRSEL GRAFİK */}
@@ -8078,10 +8205,10 @@ const sendDailyReport = useCallback((dateParam) => {
                       <td className="p-3">{isInside ? <Badge variant="green" className={isInside ? 'animate-pulse' : ''}>İÇERİDE</Badge> : <Badge>ÇIKTI</Badge>}</td>
                       <td className="p-3 text-right">
                         <div className="flex gap-1 justify-end">
-                          {isInside && (<button onClick={() => handleQuickExit(log)} disabled={actionLoading === log.id} className="text-red-400 hover:text-white p-2 bg-red-900/50 rounded hover:bg-red-600 transition text-xs font-bold flex items-center gap-1" title="Çıkış Yap"><LogOut size={14} /></button>)}
-                          {!guestExitState.active && !isInside && !isAlreadyInside && (<button onClick={() => handleReEntry(log)} disabled={actionLoading === log.id || loading} className="text-green-400 hover:text-white p-2 bg-green-900/50 rounded hover:bg-green-600 transition text-xs font-bold flex items-center gap-1" title="Tekrar Giriş Yap"><RotateCcw size={14} /></button>)}
-                          {!guestExitState.active && (<button onClick={() => { setEditingLog(log); setEditForm({ ...log, entry_location: getEntryLocation(log), exit_location: getExitLocation(log) }); }} className="text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition"><Edit size={14} /></button>)}
-                          {!guestExitState.active && (<button onClick={() => handleDelete(log)} className="text-red-400 hover:text-red-300 p-2 bg-zinc-900 rounded hover:bg-red-900/50 transition"><Trash2 size={14} /></button>)}
+                          {isInside && (<button onClick={() => handleQuickExit(log)} disabled={actionLoading === log.id} className="table-action-btn text-red-400 hover:text-white p-2 bg-red-900/50 rounded hover:bg-red-600 transition text-xs font-bold flex items-center gap-1" title="Çıkış Yap" aria-label="Çıkış yap"><LogOut size={14} /></button>)}
+                          {!guestExitState.active && !isInside && !isAlreadyInside && (<button onClick={() => handleReEntry(log)} disabled={actionLoading === log.id || loading} className="table-action-btn text-green-400 hover:text-white p-2 bg-green-900/50 rounded hover:bg-green-600 transition text-xs font-bold flex items-center gap-1" title="Tekrar Giriş Yap" aria-label="Tekrar giriş yap"><RotateCcw size={14} /></button>)}
+                          {!guestExitState.active && (<button onClick={() => { setEditingLog(log); setEditForm({ ...log, entry_location: getEntryLocation(log), exit_location: getExitLocation(log) }); }} className="table-action-btn text-blue-400 hover:text-blue-300 p-2 bg-zinc-900 rounded hover:bg-zinc-700 transition" aria-label="Kaydı düzenle"><Edit size={14} /></button>)}
+                          {!guestExitState.active && (<button onClick={() => handleDelete(log)} className="table-action-btn text-red-400 hover:text-red-300 p-2 bg-zinc-900 rounded hover:bg-red-900/50 transition" aria-label="Kaydı sil"><Trash2 size={14} /></button>)}
                         </div>
                       </td>
                     </tr>

@@ -7,11 +7,11 @@
 export const colors = {
   // Yüzeyler
   surface: {
-    base: 'bg-zinc-950',
-    card: 'bg-zinc-800/50',
-    input: 'bg-black/30',
-    elevated: 'bg-zinc-800',
-    overlay: 'bg-black/75',
+    base: 'bg-background',
+    card: 'bg-card/80',
+    input: 'bg-background/60',
+    elevated: 'bg-secondary/70',
+    overlay: 'bg-black/70',
   },
   // Metin
   text: {
@@ -23,44 +23,44 @@ export const colors = {
   },
   // Kenarlıklar
   border: {
-    default: 'border-zinc-600/60',
-    muted: 'border-zinc-700/60',
-    focus: 'focus:border-blue-500',
+    default: 'border-border/70',
+    muted: 'border-border/50',
+    focus: 'focus:border-sky-500/60',
   },
   // Vurgular
   accent: {
-    blue:    { bg: 'bg-blue-600',    text: 'text-blue-400',    border: 'border-blue-500/40',   hover: 'hover:bg-blue-700' },
-    green:   { bg: 'bg-emerald-600', text: 'text-emerald-400', border: 'border-emerald-500/40', hover: 'hover:bg-emerald-700' },
-    red:     { bg: 'bg-red-600',     text: 'text-red-400',     border: 'border-red-500/40',    hover: 'hover:bg-red-700' },
-    orange:  { bg: 'bg-orange-500',  text: 'text-orange-400',  border: 'border-orange-500/40', hover: 'hover:bg-orange-600' },
-    purple:  { bg: 'bg-purple-600',  text: 'text-purple-400',  border: 'border-purple-500/40', hover: 'hover:bg-purple-700' },
-    cyan:    { bg: 'bg-cyan-600',    text: 'text-cyan-400',    border: 'border-cyan-500/40',   hover: 'hover:bg-cyan-700' },
-    yellow:  { bg: 'bg-yellow-500',  text: 'text-yellow-400',  border: 'border-yellow-500/40', hover: 'hover:bg-yellow-600' },
-    amber:   { bg: 'bg-amber-500',   text: 'text-amber-400',   border: 'border-amber-500/40',  hover: 'hover:bg-amber-600' },
-    emerald: { bg: 'bg-emerald-600', text: 'text-emerald-400', border: 'border-emerald-500/40',hover: 'hover:bg-emerald-700' },
+    blue:    { bg: 'bg-sky-700',     text: 'text-sky-300',     border: 'border-sky-500/30',     hover: 'hover:bg-sky-800' },
+    green:   { bg: 'bg-emerald-700', text: 'text-emerald-300', border: 'border-emerald-500/30', hover: 'hover:bg-emerald-800' },
+    red:     { bg: 'bg-red-700',     text: 'text-red-300',     border: 'border-red-500/30',     hover: 'hover:bg-red-800' },
+    orange:  { bg: 'bg-orange-600',  text: 'text-orange-300',  border: 'border-orange-500/30',  hover: 'hover:bg-orange-700' },
+    purple:  { bg: 'bg-indigo-700',  text: 'text-indigo-300',  border: 'border-indigo-500/30',  hover: 'hover:bg-indigo-800' },
+    cyan:    { bg: 'bg-cyan-700',    text: 'text-cyan-300',    border: 'border-cyan-500/30',    hover: 'hover:bg-cyan-800' },
+    yellow:  { bg: 'bg-yellow-600',  text: 'text-yellow-300',  border: 'border-yellow-500/30',  hover: 'hover:bg-yellow-700' },
+    amber:   { bg: 'bg-amber-600',   text: 'text-amber-300',   border: 'border-amber-500/30',   hover: 'hover:bg-amber-700' },
+    emerald: { bg: 'bg-emerald-700', text: 'text-emerald-300', border: 'border-emerald-500/30', hover: 'hover:bg-emerald-800' },
   },
 };
 
 // --- ORTAK STİL SABİTLERİ (className string'leri) ---
 export const styles = {
   // Input / Select / Textarea temel stili
-  input: 'w-full bg-black/30 border border-zinc-600/60 rounded-md px-3 py-2 text-white outline-none focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/12 transition-all text-sm placeholder-zinc-500',
+  input: 'w-full bg-background/60 border border-input/80 rounded-lg px-3 py-2 text-foreground outline-none focus:border-sky-500/60 focus:ring-2 focus:ring-sky-500/20 transition-all text-sm placeholder:text-muted-foreground/70',
   // Label stili
-  label: 'block text-[11px] font-semibold text-zinc-400 mb-1 ml-0.5 tracking-wider uppercase',
+  label: 'block text-xs font-medium text-muted-foreground mb-1 ml-0.5',
   // Kart yüzeyi
-  card: 'bg-zinc-800/50 border border-zinc-700/60 rounded-md',
+  card: 'bg-card/80 border border-border/70 rounded-lg',
   // Overlay (modal arka planı)
   overlay: 'fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4',
   // Dropdown listesi
-  dropdown: 'absolute z-50 w-full bg-zinc-800 border border-zinc-600/60 rounded-b shadow-xl max-h-60 overflow-y-auto mt-0.5',
+  dropdown: 'absolute z-50 w-full bg-popover border border-border/70 rounded-lg shadow-card max-h-60 overflow-y-auto mt-1',
   // Dropdown öğesi
-  dropdownItem: 'px-3 py-2 hover:bg-blue-600/80 hover:text-white cursor-pointer border-b border-zinc-700/40 last:border-0 text-sm transition-colors',
+  dropdownItem: 'block w-full text-left px-3 py-2 hover:bg-accent hover:text-foreground cursor-pointer border-b border-border/30 last:border-0 text-sm transition-colors focus-visible:outline-none focus-visible:bg-accent',
   // Tablo satırı
-  tableRow: 'border-b border-zinc-700/20 hover:bg-zinc-800/40 transition-colors',
+  tableRow: 'border-b border-border/30 hover:bg-accent/25 transition-colors',
   // Badge
-  badge: 'px-2 py-0.5 rounded text-[11px] font-semibold',
+  badge: 'px-2 py-0.5 rounded-md text-[11px] font-medium',
   // Section başlık
-  sectionTitle: 'text-sm font-bold text-white flex items-center gap-2',
+  sectionTitle: 'text-sm font-semibold text-foreground flex items-center gap-2',
 };
 
 // --- DURUM RENKLERİ ---
