@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const XLSX = require('xlsx');
 const initSqlJs = require('sql.js');
+const { readFirstWorksheetRows } = require('./lib/exceljs-utils');
 
 const LOG_COLUMNS = [
   'event_type',
@@ -293,10 +293,8 @@ function ensureParentDir(filePath) {
   }
 }
 
-function readWorkbookRows(filePath) {
-  const workbook = XLSX.readFile(filePath, { cellDates: true });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true, cellDates: true });
+async function readWorkbookRows(filePath) {
+  return readFirstWorksheetRows(filePath);
 }
 
 function getExistingRow(selectStmt, createdAt) {
@@ -320,7 +318,7 @@ async function main() {
     throw new Error(`Input file not found: ${inputPath}`);
   }
 
-  const rows = readWorkbookRows(inputPath);
+  const rows = await readWorkbookRows(inputPath);
   const mappedRecords = rows.map(mapRowDetailed);
   const mappedRows = mappedRecords.map((item) => item.log).filter(Boolean);
   const warningCount = mappedRecords.reduce((sum, item) => sum + (item.warnings || []).length, 0);

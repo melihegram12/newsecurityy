@@ -4,10 +4,10 @@
  * Çalıştırma: node scripts/import-mart-25-26.js [--dry-run]
  */
 
-const XLSX = require('xlsx');
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
+const { readWorkbookArraySheets } = require('./lib/exceljs-utils');
 
 const EXCEL_PATH = 'C:/Users/ENGINME1/Desktop/ARAÇ KAYIT BİLGİSİ - MART.xlsx';
 const DB_PATH = 'C:/Users/ENGINME1/AppData/Roaming/newsecurityy/security_panel.db';
@@ -100,9 +100,7 @@ function makeVisitorLog({ serial, name, host, note, entrySec, exitSec }) {
 // ── Excel'den kayıt çıkarma ──────────────────────────────────────────────────
 
 function parseSheet(wb, sheetName) {
-  const ws = wb.Sheets[sheetName];
-  if (!ws) return [];
-  return XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  return wb[sheetName] || [];
 }
 
 function extractAllLogs(wb) {
@@ -250,7 +248,7 @@ VALUES
 async function run() {
   console.log(DRY_RUN ? '=== DRY RUN (veritabanına yazmıyor) ===' : '=== CANLI IMPORT ===');
 
-  const wb = XLSX.readFile(EXCEL_PATH);
+  const wb = await readWorkbookArraySheets(EXCEL_PATH);
   const logs = extractAllLogs(wb);
 
   console.log(`\nToplam ${logs.length} kayıt bulundu:\n`);

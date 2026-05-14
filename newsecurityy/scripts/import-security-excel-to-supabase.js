@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
-const XLSX = require('xlsx');
 const { createClient } = require('@supabase/supabase-js');
+const { readFirstWorksheetRows } = require('./lib/exceljs-utils');
 
 const LOG_COLUMNS = [
   'event_type',
@@ -412,9 +412,7 @@ async function main() {
     throw new Error('Missing Supabase env values in .env');
   }
 
-  const workbook = XLSX.readFile(inputPath, { cellDates: true });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true, cellDates: true });
+  const rows = await readFirstWorksheetRows(inputPath);
   const mappedRecords = rows.map(mapRowDetailed);
   const mappedRows = mappedRecords.map((item) => item.log).filter(Boolean);
   const warningCount = mappedRecords.reduce((sum, item) => sum + (item.warnings || []).length, 0);
