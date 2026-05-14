@@ -33,6 +33,13 @@ Mobil (lokal ag):
 
 Not: Yerel API offline olursa kayitlar kuyruga alinip daha sonra gonderilir.
 
+## Photo Realism / Dogallastirma
+
+- Uygulamada Dashboard -> `Photo Realism` ekranindan JPG/PNG/WEBP gorsel yuklenebilir.
+- Islem Django endpoint'i uzerinden calisir: `POST /api/images/naturalize`.
+- Orijinal dosya `media/image-naturalizer/original/`, islenmis dosya `media/image-naturalizer/processed/` altinda ayri tutulur.
+- Varsayilan ayarlar: realism 65, skin texture 40, color naturalness 55, shadow 35, grain 12, sharpness reduction 20, lens softness 10.
+
 ## Backend (Django + PostgreSQL)
 
 Backend dokumani: `backend/README.md`

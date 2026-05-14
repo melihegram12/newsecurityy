@@ -26,14 +26,18 @@ function clampInteger(value, fallback, min, max) {
   return Math.max(min, Math.min(max, intValue));
 }
 
+function stripHeaderLineBreaks(value) {
+  return String(value || '').replace(/[\r\n]+/g, ' ').trim();
+}
+
 function normalizeRecipients(input) {
   if (Array.isArray(input)) {
-    return input.map((x) => String(x || '').trim()).filter(Boolean);
+    return input.map(stripHeaderLineBreaks).filter(Boolean);
   }
   if (typeof input === 'string') {
     return input
       .split(/[,\n]/g)
-      .map((x) => x.trim())
+      .map(stripHeaderLineBreaks)
       .filter(Boolean);
   }
   return [];
@@ -111,9 +115,9 @@ function normalizeEmailSettings(raw = {}) {
     host: String(merged.host || '').trim(),
     port: clampInteger(merged.port, DEFAULT_SMTP_SETTINGS.port, 1, 65535),
     secure: !!merged.secure,
-    user: String(merged.user || '').trim(),
+    user: stripHeaderLineBreaks(merged.user),
     pass: String(merged.pass || ''),
-    fromName: String(merged.fromName || DEFAULT_SMTP_SETTINGS.fromName).trim(),
+    fromName: stripHeaderLineBreaks(merged.fromName || DEFAULT_SMTP_SETTINGS.fromName),
     recipients: normalizeRecipients(merged.recipients),
     scheduleHour: clampInteger(merged.scheduleHour, DEFAULT_SMTP_SETTINGS.scheduleHour, 0, 23),
     scheduleMinute: clampInteger(merged.scheduleMinute, DEFAULT_SMTP_SETTINGS.scheduleMinute, 0, 59),

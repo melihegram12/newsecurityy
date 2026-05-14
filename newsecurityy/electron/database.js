@@ -6,6 +6,18 @@ const { app } = require('electron');
 let db = null;
 let SQL = null;
 
+function resolveSqlJsFile(fileName) {
+  try {
+    return require.resolve(`sql.js/dist/${fileName}`);
+  } catch (e) {
+    return path.join(__dirname, '..', 'node_modules', 'sql.js', 'dist', fileName);
+  }
+}
+
+function ensureDbDirectory(dbPath) {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+}
+
 // Lokalde tutulan kolonlar
 const LOG_COLUMNS = new Set([
   'event_type',
@@ -267,6 +279,22 @@ function ensureLogColumns() {
   return missingColumns;
 }
 
+function isMissingColumnSqliteError(error) {
+  const msg = String(error?.message || error || '').toLowerCase();
+  return msg.includes('no such column');
+}
+
+function runWithSchemaRepair(action) {
+  try {
+    return action();
+  } catch (error) {
+    if (!isMissingColumnSqliteError(error)) throw error;
+    const repairedColumns = ensureLogColumns();
+    if (!repairedColumns.length) throw error;
+    return action();
+  }
+}
+
 function filterLogData(input = {}) {
   const output = {};
   Object.keys(input || {}).forEach((key) => {
@@ -297,9 +325,14 @@ async function initDatabase() {
 
   const dbPath = getDbPath();
   console.log('Database path:', dbPath);
+  ensureDbDirectory(dbPath);
 
   // SQL.js'i başlat
-  SQL = await initSqlJs();
+  SQL = await initSqlJs({
+    locateFile: (fileName) => (
+      fileName === 'sql-wasm.wasm' ? resolveSqlJsFile(fileName) : fileName
+    )
+  });
 
   // Mevcut veritabanı dosyası var mı kontrol et
   let buffer = null;
@@ -363,10 +396,16 @@ async function initDatabase() {
     const stmt = db.prepare(`SELECT value FROM settings WHERE key = ?`);
     stmt.bind(['_normalize_v']);
     if (stmt.step()) {
-      try { currentNormVersion = JSON.parse(stmt.getAsObject().value); } catch(e) {}
+      try {
+        currentNormVersion = JSON.parse(stmt.getAsObject().value);
+      } catch (e) {
+        console.warn('Invalid normalize version setting, normalization will be retried:', e);
+      }
     }
     stmt.free();
-  } catch(e) {}
+  } catch (e) {
+    console.warn('Could not read normalize version setting, normalization will be retried:', e);
+  }
 
   if (currentNormVersion !== NORMALIZE_VERSION) {
     const normalizeResult = normalizeAndDeduplicateLogs();
@@ -396,6 +435,7 @@ function saveDatabase() {
   const dbPath = getDbPath();
   const tmpPath = dbPath + '.tmp';
   try {
+    ensureDbDirectory(dbPath);
     const data = db.export();
     const buffer = Buffer.from(data);
     fs.writeFileSync(tmpPath, buffer);
@@ -515,89 +555,92 @@ function getLogsByDateRange(dateFrom, dateTo) {
 
 // Yeni kayıt ekle
 function insertLog(logData) {
-  const safeData = filterLogData(logData || {});
-  const createdAt = safeData.created_at || normalizeIsoDate(new Date().toISOString());
-  safeData.created_at = createdAt;
-  assertChronologyOrThrow(createdAt, safeData.exit_at);
+  return runWithSchemaRepair(() => {
+    const safeData = filterLogData(logData || {});
+    const createdAt = safeData.created_at || normalizeIsoDate(new Date().toISOString());
+    safeData.created_at = createdAt;
+    assertChronologyOrThrow(createdAt, safeData.exit_at);
 
-  const existingId = findLogIdByCreatedAt(createdAt);
-  if (existingId) {
-    updateLog(existingId, safeData);
-    return { id: existingId, ...safeData, created_at: createdAt };
-  }
-
-  const stmt = db.prepare(`
-    INSERT INTO security_logs (
-      event_type, type, sub_category, shift, plate, driver, name, host, note, location,
-      entry_location, exit_location, seal_number, seal_number_entry, seal_number_exit, tc_no, phone, user_email, created_at, exit_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  try {
-    stmt.run([
-      safeData.event_type || null,
-      safeData.type || null,
-      safeData.sub_category || null,
-      safeData.shift || null,
-      safeData.plate || null,
-      safeData.driver || null,
-      safeData.name || null,
-      safeData.host || null,
-      safeData.note || null,
-      safeData.location || null,
-      safeData.entry_location || null,
-      safeData.exit_location || null,
-      safeData.seal_number || null,
-      safeData.seal_number_entry || null,
-      safeData.seal_number_exit || null,
-      safeData.tc_no || null,
-      safeData.phone || null,
-      safeData.user_email || null,
-      createdAt,
-      safeData.exit_at || null
-    ]);
-  } catch (e) {
-    const msg = String(e?.message || e || '').toLowerCase();
-    if (msg.includes('unique') && msg.includes('created_at')) {
-      const conflictId = findLogIdByCreatedAt(createdAt);
-      if (conflictId) {
-        updateLog(conflictId, safeData);
-        return { id: conflictId, ...safeData, created_at: createdAt };
-      }
+    const existingId = findLogIdByCreatedAt(createdAt);
+    if (existingId) {
+      updateLog(existingId, safeData);
+      return { id: existingId, ...safeData, created_at: createdAt };
     }
-    throw e;
-  } finally {
-    stmt.free();
-  }
 
-  // Son eklenen ID'yi al
-  const lastId = db.exec("SELECT last_insert_rowid() as id")[0].values[0][0];
-  saveDatabase();
+    const stmt = db.prepare(`
+      INSERT INTO security_logs (
+        event_type, type, sub_category, shift, plate, driver, name, host, note, location,
+        entry_location, exit_location, seal_number, seal_number_entry, seal_number_exit, tc_no, phone, user_email, created_at, exit_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
 
-  return { id: lastId, ...safeData, created_at: createdAt };
+    try {
+      stmt.run([
+        safeData.event_type || null,
+        safeData.type || null,
+        safeData.sub_category || null,
+        safeData.shift || null,
+        safeData.plate || null,
+        safeData.driver || null,
+        safeData.name || null,
+        safeData.host || null,
+        safeData.note || null,
+        safeData.location || null,
+        safeData.entry_location || null,
+        safeData.exit_location || null,
+        safeData.seal_number || null,
+        safeData.seal_number_entry || null,
+        safeData.seal_number_exit || null,
+        safeData.tc_no || null,
+        safeData.phone || null,
+        safeData.user_email || null,
+        createdAt,
+        safeData.exit_at || null
+      ]);
+    } catch (e) {
+      const msg = String(e?.message || e || '').toLowerCase();
+      if (msg.includes('unique') && msg.includes('created_at')) {
+        const conflictId = findLogIdByCreatedAt(createdAt);
+        if (conflictId) {
+          updateLog(conflictId, safeData);
+          return { id: conflictId, ...safeData, created_at: createdAt };
+        }
+      }
+      throw e;
+    } finally {
+      stmt.free();
+    }
+
+    const lastId = db.exec("SELECT last_insert_rowid() as id")[0].values[0][0];
+    saveDatabase();
+
+    return { id: lastId, ...safeData, created_at: createdAt };
+  });
 }
 
 // Kayıt güncelle
 function updateLog(id, updateData) {
-  const safeData = filterLogData(updateData || {});
-  const fields = Object.keys(safeData).filter(k => safeData[k] !== undefined);
-  if (fields.length === 0) return false;
-  const existing = getLogById(id);
-  if (!existing) return false;
-  const effectiveCreatedAt = safeData.created_at !== undefined ? safeData.created_at : existing.created_at;
-  const effectiveExitAt = safeData.exit_at !== undefined ? safeData.exit_at : existing.exit_at;
-  assertChronologyOrThrow(effectiveCreatedAt, effectiveExitAt);
+  return runWithSchemaRepair(() => {
+    const safeData = filterLogData(updateData || {});
+    const fields = Object.keys(safeData).filter(k => safeData[k] !== undefined);
+    if (fields.length === 0) return false;
+    const existing = getLogById(id);
+    if (!existing) return false;
+    const effectiveCreatedAt = safeData.created_at !== undefined ? safeData.created_at : existing.created_at;
+    const effectiveExitAt = safeData.exit_at !== undefined ? safeData.exit_at : existing.exit_at;
+    assertChronologyOrThrow(effectiveCreatedAt, effectiveExitAt);
 
-  const setClause = fields.map(f => `${f} = ?`).join(', ');
-  const values = fields.map(f => safeData[f]);
-  values.push(id);
+    const setClause = fields.map(f => `${f} = ?`).join(', ');
+    const values = fields.map(f => safeData[f]);
+    values.push(id);
 
-  const stmt = db.prepare(`UPDATE security_logs SET ${setClause} WHERE id = ?`);
-  stmt.run(values);
-  stmt.free();
+    const stmt = db.prepare(`UPDATE security_logs SET ${setClause} WHERE id = ?`);
+    stmt.run(values);
+    stmt.free();
 
-  saveDatabase();
-  return true;
+    saveDatabase();
+    return true;
+  });
 }
 
 // Çıkış işlemi
@@ -652,76 +695,78 @@ function importLogs(logs = []) {
   let invalid = 0;
   let errors = 0;
 
-  db.run('BEGIN TRANSACTION');
+  return runWithSchemaRepair(() => {
+    db.run('BEGIN TRANSACTION');
 
-  const selectStmt = db.prepare(`SELECT id FROM security_logs WHERE created_at = ? LIMIT 1`);
-  const insertStmt = db.prepare(`
-    INSERT INTO security_logs (${LOG_COLUMN_LIST.join(', ')})
-    VALUES (${LOG_COLUMN_LIST.map(() => '?').join(', ')})
-  `);
-  const updateStmt = db.prepare(`
-    UPDATE security_logs
-    SET ${LOG_UPDATE_COLUMNS.map((col) => `${col} = ?`).join(', ')}
-    WHERE created_at = ?
-  `);
+    const selectStmt = db.prepare(`SELECT id FROM security_logs WHERE created_at = ? LIMIT 1`);
+    const insertStmt = db.prepare(`
+      INSERT INTO security_logs (${LOG_COLUMN_LIST.join(', ')})
+      VALUES (${LOG_COLUMN_LIST.map(() => '?').join(', ')})
+    `);
+    const updateStmt = db.prepare(`
+      UPDATE security_logs
+      SET ${LOG_UPDATE_COLUMNS.map((col) => `${col} = ?`).join(', ')}
+      WHERE created_at = ?
+    `);
 
-  try {
-    for (const log of logs) {
-      try {
-        const safeData = filterLogData(log || {});
-        const createdAt = safeData.created_at;
-        if (!createdAt) {
-          invalid += 1;
-          continue;
+    try {
+      for (const log of logs) {
+        try {
+          const safeData = filterLogData(log || {});
+          const createdAt = safeData.created_at;
+          if (!createdAt) {
+            invalid += 1;
+            continue;
+          }
+
+          const chronologyIssue = getChronologyIssue(createdAt, safeData.exit_at);
+          if (chronologyIssue) {
+            invalid += 1;
+            console.warn('[db.importLogs] chronology anomaly skipped:', chronologyIssue, safeData.plate || safeData.name || createdAt);
+            continue;
+          }
+
+          selectStmt.bind([createdAt]);
+          const exists = selectStmt.step();
+          selectStmt.reset();
+
+          if (exists) {
+            updateStmt.run([
+              ...LOG_UPDATE_COLUMNS.map((col) => (safeData[col] !== undefined ? safeData[col] : null)),
+              createdAt
+            ]);
+            updated += 1;
+          } else {
+            insertStmt.run(LOG_COLUMN_LIST.map((col) => (safeData[col] !== undefined ? safeData[col] : null)));
+            inserted += 1;
+          }
+        } catch (e) {
+          errors += 1;
         }
-
-        const chronologyIssue = getChronologyIssue(createdAt, safeData.exit_at);
-        if (chronologyIssue) {
-          invalid += 1;
-          console.warn('[db.importLogs] chronology anomaly skipped:', chronologyIssue, safeData.plate || safeData.name || createdAt);
-          continue;
-        }
-
-        selectStmt.bind([createdAt]);
-        const exists = selectStmt.step();
-        selectStmt.reset();
-
-        if (exists) {
-          updateStmt.run([
-            ...LOG_UPDATE_COLUMNS.map((col) => (safeData[col] !== undefined ? safeData[col] : null)),
-            createdAt
-          ]);
-          updated += 1;
-        } else {
-          insertStmt.run(LOG_COLUMN_LIST.map((col) => (safeData[col] !== undefined ? safeData[col] : null)));
-          inserted += 1;
-        }
-      } catch (e) {
-        errors += 1;
       }
+
+      db.run('COMMIT');
+    } catch (e) {
+      console.error('Import transaction failed, rolling back:', e);
+      try { db.run('ROLLBACK'); } catch (_) { /* ignore */ }
+      return { success: false, error: 'transaction_failed', total: logs.length, inserted: 0, updated: 0, invalid, errors };
+    } finally {
+      selectStmt.free();
+      insertStmt.free();
+      updateStmt.free();
     }
 
-    db.run('COMMIT');
-  } catch (e) {
-    console.error('Import transaction failed, rolling back:', e);
-    try { db.run('ROLLBACK'); } catch (_) { /* ignore */ }
-    return { success: false, error: 'transaction_failed', total: logs.length, inserted: 0, updated: 0, invalid, errors };
-  } finally {
-    selectStmt.free();
-    insertStmt.free();
-    updateStmt.free();
-  }
+    saveDatabase();
 
-  saveDatabase();
-
-  return {
-    success: true,
-    total: logs.length,
-    inserted,
-    updated,
-    invalid,
-    errors
-  };
+    return {
+      success: true,
+      total: logs.length,
+      inserted,
+      updated,
+      invalid,
+      errors
+    };
+  });
 }
 
 // Plaka veya isim ile arama

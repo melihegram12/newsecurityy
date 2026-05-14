@@ -170,6 +170,11 @@ Payroll özeti:
 SGK raporu:
 - `GET /api/sgk/report?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`
 
+Gorsel dogallastirma:
+- `POST /api/images/naturalize`
+- Multipart alanlari: `image`, `realism_strength`, `skin_texture_recovery`, `color_naturalness`, `shadow_correction`, `grain_amount`, `sharpness_reduction`, `lens_softness`
+- Orijinal ve islenmis dosyalar `media/image-naturalizer/` altinda ayri saklanir.
+
 Notlar:
 - Payroll özeti devamsızlık kayıtları (`AbsenceRecord`) üzerinden hesaplanır.
 - Ücret/prim kesintisi için `PayrollProfile` içindeki oranlar kullanılır.
