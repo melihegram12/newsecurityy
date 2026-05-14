@@ -57,6 +57,15 @@ electron-runtime.*
 # Backups & temp files
 *.bak
 *.bak-*
+/backups/
+
+# AI / session artifacts
+/.playwright-mcp/
+/thoughts/
+AGENTS.md
+
+# Root-level orphan files (Vite entry index.html is intentionally tracked)
+/database.js
 
 # Extracted / reverse-engineered artifacts
 _app3015_*
