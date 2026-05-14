@@ -13,16 +13,22 @@ function Write-Step([string]$Message) {
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $distDir = Join-Path $root "dist"
 $latestDir = Join-Path $distDir "latest"
+$packageJsonPath = Join-Path $root "package.json"
+$packageJsonOriginal = Get-Content -Raw -Path $packageJsonPath
+$packageVersion = (Get-Content -Raw -Path $packageJsonPath | ConvertFrom-Json).version
 
 Push-Location $root
 try {
     Write-Step "Building Windows installer (.exe)"
     npm run electron:build
     if ($LASTEXITCODE -ne 0) { throw "electron:build failed." }
+    if ((Get-Content -Raw -Path $packageJsonPath) -ne $packageJsonOriginal) {
+        Set-Content -Path $packageJsonPath -Value $packageJsonOriginal -Encoding UTF8 -NoNewline
+    }
 
     $stamp = Get-Date -Format "yyMMddHH"
     $env:ANDROID_VERSION_CODE = $stamp
-    $env:ANDROID_VERSION_NAME = "1.0.13-mobile+$stamp"
+    $env:ANDROID_VERSION_NAME = "$packageVersion-mobile+$stamp"
 
     Write-Step "Syncing Capacitor Android project"
     npx cap sync android
@@ -69,6 +75,9 @@ try {
         Write-Host "APK install completed."
     }
 } finally {
+    if ((Test-Path $packageJsonPath) -and ((Get-Content -Raw -Path $packageJsonPath) -ne $packageJsonOriginal)) {
+        Set-Content -Path $packageJsonPath -Value $packageJsonOriginal -Encoding UTF8 -NoNewline
+    }
     Remove-Item Env:ANDROID_VERSION_CODE -ErrorAction SilentlyContinue
     Remove-Item Env:ANDROID_VERSION_NAME -ErrorAction SilentlyContinue
     Pop-Location

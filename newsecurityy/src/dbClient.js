@@ -1,6 +1,6 @@
 // Electron veya Web ortamını tespit et ve uygun API'yi kullan
-import { getChronologyIssue } from './lib/utils';
-import { supabase } from './supabaseClient';
+import { getChronologyIssue } from './lib/utils.js';
+import { supabase } from './supabaseClient.js';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
 const isMobile = typeof window !== 'undefined' && !!window.Capacitor && !isElectron;

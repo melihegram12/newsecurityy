@@ -4,15 +4,19 @@ import { createClient } from '@supabase/supabase-js'
 // NOT: Gerçek anahtarları repo içine gömmeyin. `.env` / deploy env kullanın.
 const fallbackUrl = 'http://localhost:54321'
 const fallbackKey = 'test-anon-key'
+const env = {
+  ...((typeof process !== 'undefined' && process.env) ? process.env : {}),
+  ...(import.meta.env || {}),
+}
 
 const supabaseUrl =
-  process.env.REACT_APP_SUPABASE_URL ||
-  process.env.VITE_SUPABASE_URL ||
+  env.REACT_APP_SUPABASE_URL ||
+  env.VITE_SUPABASE_URL ||
   fallbackUrl
 
 const supabaseKey =
-  process.env.REACT_APP_SUPABASE_ANON_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY ||
+  env.REACT_APP_SUPABASE_ANON_KEY ||
+  env.VITE_SUPABASE_ANON_KEY ||
   fallbackKey
 
 if (supabaseUrl === fallbackUrl || supabaseKey === fallbackKey) {

@@ -1,8 +1,9 @@
 const { spawnSync } = require('child_process');
 
 process.env.REACT_APP_BUILD_TIME = new Date().toISOString();
+process.env.VITE_BUILD_TIME = process.env.REACT_APP_BUILD_TIME;
 
-const result = spawnSync('react-scripts', ['build'], {
+const result = spawnSync('vite', ['build'], {
   stdio: 'inherit',
   shell: true,
   env: process.env

@@ -1,6 +1,6 @@
 {
   "name": "newsecurityy",
-  "version": "1.0.13",
+  "version": "1.0.17",
   "private": true,
   "description": "Offline-oncelikli guvenlik paneli (Electron + web).",
   "author": "ENGINME1",
@@ -8,16 +8,17 @@
   "homepage": "./",
   "dependencies": {
     "electron-updater": "^6.7.3",
+    "exceljs": "^4.4.0",
     "node-schedule": "^2.1.1",
-    "nodemailer": "^7.0.12",
+    "nodemailer": "^8.0.7",
     "sql.js": "^1.13.0"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "vite",
     "build": "node scripts/build-with-time.js",
     "sync:supabase:pull": "node scripts/import-supabase-to-local.js",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "api:map": "python scripts/api_business_mapper.py --root . --out docs/api-business-mapping",
     "email:smoke": "electron scripts/email_scheduler_smoke.js",
     "feature:smoke": "electron scripts/full_feature_smoke.js",
@@ -59,12 +60,6 @@
       }
     ]
   },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
   "browserslist": {
     "production": [
       ">0.2%",
@@ -87,22 +82,23 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
+    "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.4.22",
     "baseline-browser-mapping": "^2.9.19",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
-    "electron-rebuild": "^3.2.9",
+    "jsdom": "^29.1.1",
     "lucide-react": "^0.555.0",
     "postcss": "^8.5.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-scripts": "5.0.1",
     "supabase": "^2.70.5",
     "tailwindcss": "^3.4.1",
+    "vite": "^8.0.12",
+    "vitest": "^4.1.6",
     "wait-on": "^9.0.3",
-    "web-vitals": "^2.1.4",
-    "xlsx": "^0.18.5"
+    "web-vitals": "^2.1.4"
   }
 }
