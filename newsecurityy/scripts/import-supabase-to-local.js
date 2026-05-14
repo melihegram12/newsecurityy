@@ -220,11 +220,17 @@ async function main() {
       const nameIdx = info[0].columns.indexOf('name');
       info[0].values.forEach(row => { if (row[nameIdx]) existingCols.add(row[nameIdx]); });
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn("security_logs kolonlari okunamadi, kolon tamamlama denenecek:", e.message || e);
+  }
 
   for (const col of COLUMNS) {
     if (!existingCols.has(col)) {
-      try { db.run(`ALTER TABLE security_logs ADD COLUMN ${col} TEXT`); } catch (e) {}
+      try {
+        db.run(`ALTER TABLE security_logs ADD COLUMN ${col} TEXT`);
+      } catch (e) {
+        console.warn(`security_logs.${col} kolonu eklenemedi:`, e.message || e);
+      }
     }
   }
 

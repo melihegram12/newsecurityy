@@ -15,7 +15,7 @@ select
     $$
     select
       net.http_post(
-          url:='https://muqryghjhzhbjkvxwrgp.supabase.co/functions/v1/send-daily-report',
+          url:='https://qlzwxrozytapipvyvdvg.supabase.co/functions/v1/send-daily-report',
           headers:='{"Content-Type": "application/json"}'::jsonb
       ) as request_id;
     $$

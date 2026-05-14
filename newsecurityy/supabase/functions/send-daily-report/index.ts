@@ -1,7 +1,11 @@
 // Deno ve Nodemailer Entegrasyonu
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import nodemailer from "npm:nodemailer@6.9.7"
+import nodemailer from "npm:nodemailer@8.0.7"
+
+function stripHeaderLineBreaks(value: string | null) {
+  return (value || '').replace(/[\r\n]+/g, ' ').trim()
+}
 
 // SMTP ayarları (ENV üzerinden)
 // Örnek Gmail:
@@ -9,10 +13,10 @@ import nodemailer from "npm:nodemailer@6.9.7"
 const SMTP_HOST = Deno.env.get('SMTP_HOST') || 'smtp.gmail.com'
 const SMTP_PORT = Number(Deno.env.get('SMTP_PORT') || '465')
 const SMTP_SECURE = (Deno.env.get('SMTP_SECURE') || 'true').toLowerCase() === 'true'
-const SMTP_USER = Deno.env.get('SMTP_USER') || ''
+const SMTP_USER = stripHeaderLineBreaks(Deno.env.get('SMTP_USER'))
 const SMTP_PASS = Deno.env.get('SMTP_PASS') || ''
-const SMTP_FROM = Deno.env.get('SMTP_FROM') || SMTP_USER
-const SMTP_FROM_NAME = Deno.env.get('SMTP_FROM_NAME') || 'Güvenlik Raporu'
+const SMTP_FROM = stripHeaderLineBreaks(Deno.env.get('SMTP_FROM')) || SMTP_USER
+const SMTP_FROM_NAME = stripHeaderLineBreaks(Deno.env.get('SMTP_FROM_NAME')) || 'Güvenlik Raporu'
 
 // Supabase Credentials - Sadece standart isimler kullan
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
@@ -20,7 +24,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
 const RECIPIENTS = (Deno.env.get('REPORT_RECIPIENTS') || '')
   .split(',')
-  .map((s) => s.trim())
+  .map(stripHeaderLineBreaks)
   .filter(Boolean)
 
 serve(async (req) => {

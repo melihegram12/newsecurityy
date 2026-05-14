@@ -4,11 +4,11 @@
  * Çalıştırma: node scripts/push-mart-25-26-to-supabase.js [--dry-run]
  */
 
-const XLSX = require('xlsx');
 const { createClient } = require('@supabase/supabase-js');
+const fs = require('fs');
+const path = require('path');
+const { readWorkbookArraySheets } = require('./lib/exceljs-utils');
 
-const SUPABASE_URL = 'https://lxhwfngdtwqgcqxbfzde.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4aHdmbmdkdHdxZ2NxeGJmemRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxMDk2OTQsImV4cCI6MjA4NTY4NTY5NH0._TIcK-FFVKiJqctIdjui_zuvQkjp-5mLtX7lVqK8sBY';
 const EXCEL_PATH = 'C:/Users/ENGINME1/Desktop/ARAÇ KAYIT BİLGİSİ - MART.xlsx';
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -18,6 +18,58 @@ const TARGET_SERIALS = new Set([MAR_25, MAR_26]);
 
 // Türkiye sabit UTC+3 (2016'dan beri DST yok)
 const TR_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+function readEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+
+  return fs.readFileSync(filePath, 'utf8')
+    .split(/\r?\n/)
+    .reduce((acc, line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return acc;
+
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) return acc;
+
+      const key = trimmed.slice(0, eqIdx).trim();
+      let value = trimmed.slice(eqIdx + 1).trim();
+
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+
+      acc[key] = value;
+      return acc;
+    }, {});
+}
+
+function getSupabaseConfig() {
+  const fileEnv = readEnvFile(path.join(__dirname, '..', '.env'));
+  const supabaseUrl = (
+    process.env.NEW_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    fileEnv.NEW_SUPABASE_URL ||
+    fileEnv.SUPABASE_URL ||
+    process.env.REACT_APP_SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    fileEnv.REACT_APP_SUPABASE_URL ||
+    fileEnv.VITE_SUPABASE_URL ||
+    ''
+  ).trim();
+  const supabaseKey = (
+    process.env.NEW_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    fileEnv.NEW_SERVICE_ROLE_KEY ||
+    fileEnv.SUPABASE_SERVICE_ROLE_KEY ||
+    ''
+  ).trim();
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('Missing Supabase URL or service-role key in .env.');
+  }
+
+  return { supabaseUrl, supabaseKey };
+}
 
 function excelToISO(serial, timeFraction) {
   if (!serial || (timeFraction === '' || timeFraction === null || timeFraction === undefined)) return null;
@@ -91,9 +143,7 @@ function makeVisitor({ serial, name, host, note, entrySec, exitSec }) {
 }
 
 function rows(wb, name) {
-  const ws = wb.Sheets[name];
-  if (!ws) return [];
-  return XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  return wb[name] || [];
 }
 
 function extractLogs(wb) {
@@ -158,7 +208,7 @@ function extractLogs(wb) {
 async function run() {
   console.log(DRY_RUN ? '=== DRY RUN ===' : '=== SUPABASE PUSH ===\n');
 
-  const wb = XLSX.readFile(EXCEL_PATH);
+  const wb = await readWorkbookArraySheets(EXCEL_PATH);
   const logs = extractLogs(wb);
 
   // Özet
@@ -173,7 +223,8 @@ async function run() {
     return;
   }
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  const { supabaseUrl, supabaseKey } = getSupabaseConfig();
+  const supabase = createClient(supabaseUrl, supabaseKey);
 
   // created_at çakışmalarını önlemek için milisaniye offset ekle
   const seen = new Map();
