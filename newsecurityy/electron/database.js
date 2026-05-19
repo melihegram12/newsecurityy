@@ -628,7 +628,15 @@ function updateLog(id, updateData) {
     if (!existing) return false;
     const effectiveCreatedAt = safeData.created_at !== undefined ? safeData.created_at : existing.created_at;
     const effectiveExitAt = safeData.exit_at !== undefined ? safeData.exit_at : existing.exit_at;
-    assertChronologyOrThrow(effectiveCreatedAt, effectiveExitAt);
+    const chronologyIssue = getChronologyIssue(effectiveCreatedAt, effectiveExitAt);
+    if (chronologyIssue === 'invalid_timestamp') {
+      const err = new Error(getChronologyErrorMessage(chronologyIssue));
+      err.code = chronologyIssue;
+      throw err;
+    }
+    if (chronologyIssue === 'exit_before_entry') {
+      console.warn('[db.updateLog] exit_before_entry ignored — likely wrong created_at:', effectiveCreatedAt, '->', effectiveExitAt);
+    }
 
     const setClause = fields.map(f => `${f} = ?`).join(', ');
     const values = fields.map(f => safeData[f]);
@@ -669,9 +677,12 @@ function upsertLogByCreatedAt(logData) {
   const { id: _remoteId, ...data } = logData;
   const safeData = filterLogData(data);
   const chronologyIssue = getChronologyIssue(safeData.created_at, safeData.exit_at);
-  if (chronologyIssue) {
-    console.warn('[db.upsertLogByCreatedAt] chronology anomaly skipped:', chronologyIssue, safeData.plate || safeData.name || safeData.created_at);
+  if (chronologyIssue === 'invalid_timestamp') {
+    console.warn('[db.upsertLogByCreatedAt] invalid_timestamp skipped:', safeData.plate || safeData.name || safeData.created_at);
     return false;
+  }
+  if (chronologyIssue === 'exit_before_entry') {
+    console.warn('[db.upsertLogByCreatedAt] exit_before_entry — proceeding anyway, likely wrong created_at:', safeData.created_at, '->', safeData.exit_at);
   }
   const existingId = findLogIdByCreatedAt(safeData.created_at);
 

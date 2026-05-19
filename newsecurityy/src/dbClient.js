@@ -583,8 +583,11 @@ async function syncToSupabase(action, data, localId = null, options = {}) {
             const updateData = pickSupabaseLogFields({ ...(data?.extraData || {}), exit_at: data?.exit_at });
             delete updateData.created_at;
             const chronology = validateChronology(updateData, matchCreatedAt);
-            if (chronology.issue) {
+            if (chronology.issue === 'invalid_timestamp') {
                 return buildChronologySkipResult(action, chronology.issue, { ...updateData, created_at: matchCreatedAt }, writeSyncStatus);
+            }
+            if (chronology.issue === 'exit_before_entry') {
+                console.warn('[sync.EXIT] exit_before_entry ignored — likely wrong created_at:', matchCreatedAt, '->', updateData.exit_at);
             }
 
             let workingPayload = updateData;
@@ -671,7 +674,7 @@ async function syncToLocalApi(action, data, localId = null, options = {}) {
                 normalizeIsoDate(localId || data?.created_at || data?.extraData?.created_at)
             );
         }
-        if (chronology?.issue) {
+        if (chronology?.issue && !(action === 'EXIT' && chronology.issue === 'exit_before_entry')) {
             const message = chronology.message || getChronologyErrorMessage(chronology.issue);
             console.warn(`[local-sync.${action}] chronology anomaly skipped:`, chronology.issue, data?.plate || data?.name || data?.created_at || '-');
             writeLocalSyncStatus({

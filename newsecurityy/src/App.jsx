@@ -37,12 +37,10 @@ import { readExcelRowsFromBuffer, writeRowsToExcelFile } from './lib/excel-utils
 import {
   buildExitOptionLabel,
   getExitCandidates,
-  matchesVehicleSubCategory,
   resolveExitRecord,
   shouldCreateIndependentExit,
   shouldAskVehicleEntryLocation,
   shouldAskVehicleExitLocation,
-  SUB_TAB_TO_SUB_CATEGORY,
 } from './lib/exit-utils';
 import { buildIndependentExitConfirmation, resolveGuestExitUiState } from './lib/guest-exit-utils';
 import { withSingleFlight } from './lib/async-guards';
@@ -607,6 +605,14 @@ export default function App() {
   }, [exitCandidates, selectedExitLogId]);
 
   useEffect(() => {
+    if (!isExitDirection) return;
+    if (selectedExitLogId) return;
+    if (exitCandidates.length === 1) {
+      setSelectedExitLogId(getLogBindingId(exitCandidates[0]) || String(exitCandidates[0].id || ''));
+    }
+  }, [isExitDirection, selectedExitLogId, exitCandidates]);
+
+  useEffect(() => {
     if (vehicleSubTab !== 'service') return;
     setVehicleSubTab('guest');
     setFormData(prev => ({
@@ -1005,6 +1011,10 @@ export default function App() {
         clearTimeout(loginTimeout);
         const payload = await res.json().catch(() => null);
         if (!res.ok) {
+          if (res.status === 404) {
+            completeFallbackLogin('local-api-not-found');
+            return;
+          }
           let detail = payload?.detail || payload?.error || `HTTP ${res.status}`;
           if (res.status === 403 && Array.isArray(payload?.available_roles) && payload.available_roles.length > 0) {
             detail = `${detail} (roller: ${payload.available_roles.join(', ')})`;
@@ -1829,7 +1839,7 @@ export default function App() {
         }
         return extraData;
       };
-      if (!independentExitMode) {
+      {
         const exitLookup = resolveExitRecord({
           selectedExitLogId,
           activeLogs,
@@ -1852,11 +1862,14 @@ export default function App() {
 
           const extraData = buildExitExtraData(existingLog);
           const identifier = existingLog.plate || existingLog.name || rawIdentifier;
+          const crossSubtabNote = exitLookup.reason === 'identifier_cross_subtab' && existingLog.sub_category
+            ? `\n(Farklı alt kategoride bulundu: ${existingLog.sub_category})`
+            : '';
 
           setConfirmModal({
             isOpen: true,
             title: 'Çıkış Onayı',
-            message: `${identifier} için çıkış işlemini onaylıyor musunuz?${extraData.exit_location ? `\nGidilen: ${extraData.exit_location}` : ''}`,
+            message: `${identifier} için çıkış işlemini onaylıyor musunuz?${extraData.exit_location ? `\nGidilen: ${extraData.exit_location}` : ''}${crossSubtabNote}`,
             type: 'warning',
             onConfirm: async () => {
               setConfirmModal(prev => ({ ...prev, isOpen: false }));
@@ -1872,7 +1885,7 @@ export default function App() {
             showToast("Seçilen aktif kayıt artık içeride görünmüyor. Listeyi yenileyip tekrar seçin.", "error");
             return;
           }
-          if (exitLookup.reason === 'ambiguous') {
+          if (exitLookup.reason === 'ambiguous' || exitLookup.reason === 'ambiguous_cross_subtab') {
             independentExitConfirmRef.current = '';
             showToast("Birden fazla aktif kayıt bulundu. Lütfen listeden doğru kaydı seçin.", "error");
             return;
@@ -1883,67 +1896,82 @@ export default function App() {
             return;
           }
           // Local state'de bulunamadı — DB'ye taze sorgu at (Giriş modundaki kontrol gibi)
-          const expectedSubCategory = mainTab === 'vehicle' ? SUB_TAB_TO_SUB_CATEGORY[vehicleSubTab] : null;
+          // NOT: Alt-sekme (sub_category) filtresi UYGULANMAZ — araç hangi sekmeden
+          // girilmiş olursa olsun çıkış yaptırılabilmeli. Aksi halde gün-sonu vardiya
+          // değişiminde operatör yanlış sekmedeyken "araç içerde ama çıkış yapmıyor"
+          // hatası ortaya çıkıyor.
           try {
+            const col = mainTab === 'vehicle' ? 'plate' : 'name';
+            const searchKey = rawIdentifier.toUpperCase();
+            const searchKeyNorm = normalizeIdentifier(rawIdentifier);
+            // Dedup — same string if no spaces/special chars
+            const searchVariants = [...new Set([searchKey, searchKeyNorm].filter(Boolean))];
+            let dbRecord = null;
+            let dbMatchCount = 0;
+
             if (isElectron) {
               const activeData = await dbClient.getActiveLogs();
-              const dbMatches = (activeData || []).filter(log => {
-                if (!matchesByTab(log, rawIdentifier, mainTab)) return false;
-                if (expectedSubCategory && !matchesVehicleSubCategory(log, vehicleSubTab)) return false;
-                return true;
-              });
-              if (dbMatches.length === 1) {
-                const dbRecord = dbMatches[0];
-                applyLocalLogUpsert(dbRecord, { includeInActive: true });
-                const didExit = await handleExit(getLogBindingId(dbRecord) || dbRecord.id, null, buildExitExtraData(dbRecord), dbRecord);
-                if (didExit) resetForm();
-                return;
-              }
-            } else {
+              const localMatches = (activeData || []).filter(log => matchesByTab(log, rawIdentifier, mainTab));
+              dbMatchCount = localMatches.length;
+              if (localMatches.length === 1) dbRecord = localMatches[0];
+            }
+
+            // Electron'da local'de bulunamadıysa Supabase'e de bak (cross-device senkron gap'i).
+            // Web ortamında zaten Supabase asıl kaynak.
+            if (!dbRecord && dbMatchCount !== 1) {
               const reallyOnline = await checkOnlineStatus();
               if (reallyOnline) {
-                const col = mainTab === 'vehicle' ? 'plate' : 'name';
-                let dbQuery = supabase
+                const { data: remoteRows } = await supabase
                   .from('security_logs')
                   .select('*')
                   .is('exit_at', null)
-                  .eq(col, rawIdentifier.toUpperCase());
-                if (expectedSubCategory) {
-                  dbQuery = dbQuery.ilike('sub_category', `${expectedSubCategory}%`);
-                }
-                const { data: dbMatches } = await dbQuery;
-                if (dbMatches && dbMatches.length === 1) {
-                  const dbRecord = dbMatches[0];
-                  applyLocalLogUpsert(dbRecord, { includeInActive: true });
-                  const didExit = await handleExit(getLogBindingId(dbRecord) || dbRecord.id, null, buildExitExtraData(dbRecord), dbRecord);
-                  if (didExit) resetForm();
-                  return;
+                  .in(col, searchVariants);
+                // Client-side normalize match: boşluk/büyük-küçük harf farkını tolere eder
+                const remoteMatches = (remoteRows || []).filter(log => matchesByTab(log, rawIdentifier, mainTab));
+                if (remoteMatches.length === 1) {
+                  dbRecord = remoteMatches[0];
+                  dbMatchCount = 1;
+                } else if (remoteMatches.length > 1) {
+                  dbMatchCount = remoteMatches.length;
                 }
               }
             }
+
+            if (dbMatchCount > 1) {
+              showToast("Veritabanında aynı plaka/isim için birden fazla açık kayıt var. Doğru kaydı manuel seçip kapatın.", "error");
+              return;
+            }
+            if (dbRecord) {
+              applyLocalLogUpsert(dbRecord, { includeInActive: true });
+              const didExit = await handleExit(getLogBindingId(dbRecord) || dbRecord.id, null, buildExitExtraData(dbRecord), dbRecord);
+              if (didExit) resetForm();
+              return;
+            }
           } catch (_dbCheckErr) {
-            // DB kontrol hatası — yeni çıkış kaydı oluşturmaya devam et
+            console.warn('[exit-fallback] DB kontrol hatası, bağımsız çıkış akışına devam ediliyor:', _dbCheckErr?.message || _dbCheckErr);
           }
-          const exitLocationKeyPart = shouldShowVehicleExitLocation ? sanitizeInput(formData.exit_location) : '';
-          const independentExitKey = `${mainTab}|${vehicleSubTab}|${visitorSubTab}|${normalizedExitIdentifier}|${exitLocationKeyPart}`;
-          if (independentExitConfirmRef.current !== independentExitKey) {
-            const confirmation = buildIndependentExitConfirmation(normalizedExitIdentifier || 'Bu araç');
-            setConfirmModal({
-              isOpen: true,
-              title: confirmation.title,
-              message: confirmation.message,
-              type: 'warning',
-              confirmLabel: 'Yine de Çıkış Yap',
-              cancelLabel: 'Vazgeç',
-              onConfirm: async () => {
-                setConfirmModal(prev => ({ ...prev, isOpen: false }));
-                independentExitConfirmRef.current = independentExitKey;
-                await handleEntry();
-              }
-            });
-            return;
+          if (!independentExitMode) {
+            const exitLocationKeyPart = shouldShowVehicleExitLocation ? sanitizeInput(formData.exit_location) : '';
+            const independentExitKey = `${mainTab}|${vehicleSubTab}|${visitorSubTab}|${normalizedExitIdentifier}|${exitLocationKeyPart}`;
+            if (independentExitConfirmRef.current !== independentExitKey) {
+              const confirmation = buildIndependentExitConfirmation(normalizedExitIdentifier || 'Bu araç');
+              setConfirmModal({
+                isOpen: true,
+                title: confirmation.title,
+                message: confirmation.message,
+                type: 'warning',
+                confirmLabel: 'Yine de Çıkış Yap',
+                cancelLabel: 'Vazgeç',
+                onConfirm: async () => {
+                  setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                  independentExitConfirmRef.current = independentExitKey;
+                  await handleEntry();
+                }
+              });
+              return;
+            }
+            independentExitConfirmRef.current = '';
           }
-          independentExitConfirmRef.current = '';
           // Aktif kayıt bulunamadı — giriş kaydı olmadan bağımsız çıkış kaydı oluşturulacak
         }
       }
@@ -7157,7 +7185,7 @@ const sendDailyReport = useCallback((dateParam) => {
 
                 {isExitDirection && (
                   <>
-                    <div className="bg-orange-900/20 p-3 rounded border border-orange-500/30 animate-in fade-in slide-in-from-top-2"><p className="text-orange-300 text-sm flex items-center gap-2"><AlertCircle size={16} />{independentExitMode ? 'Şirket aracı çıkışı hareket kaydı olarak alınır; önce aktif giriş kaydı aranmaz.' : 'Plakayı girin. Araç içerideyse otomatik çıkış yapılır; giriş kaydı yoksa onay sonrası girişsiz çıkış kaydı oluşturulur.'}</p></div>
+                    <div className="bg-orange-900/20 p-3 rounded border border-orange-500/30 animate-in fade-in slide-in-from-top-2"><p className="text-orange-300 text-sm flex items-center gap-2"><AlertCircle size={16} />{independentExitMode ? 'Plakayı girin. Araç içerideyse aktif giriş kaydı kapatılır; içeride değilse girişsiz çıkış kaydı oluşturulur.' : 'Plakayı girin. Araç içerideyse otomatik çıkış yapılır; giriş kaydı yoksa onay sonrası girişsiz çıkış kaydı oluşturulur.'}</p></div>
                     {shouldShowVehicleExitLocation && (
                       <div className="bg-blue-900/20 p-3 rounded border border-blue-500/30 animate-in fade-in slide-in-from-top-2 mt-2">
                         <label htmlFor="gidecegim-lokasyon" className="text-xs text-blue-300 flex items-center gap-1 mb-1 font-bold"><MapPin size={12} /> GİDECEĞİ LOKASYON</label>

@@ -98,7 +98,7 @@ describe('exit-utils', () => {
     expect(result.record?.id).toBe('veh-company-1');
   });
 
-  test('resolveExitRecord with wrong vehicleSubTab does not find record', () => {
+  test('resolveExitRecord with wrong vehicleSubTab still finds record via cross-subtab fallback', () => {
     const result = resolveExitRecord({
       activeLogs,
       allLogs: activeLogs,
@@ -107,8 +107,10 @@ describe('exit-utils', () => {
       vehicleSubTab: 'guest',
     });
 
-    expect(result.reason).toBe('not_found');
-    expect(result.record).toBeNull();
+    // Gün-sonu / yanlış sekme senaryosu: araç içerde, operatör farklı sekmede
+    // → çıkış yine de yapılabilmeli (içerideki kayıt bulunsun).
+    expect(result.reason).toBe('identifier_cross_subtab');
+    expect(result.record?.id).toBe('veh-company-1');
   });
 
   test('matchesVehicleSubCategory accepts company entry variants', () => {

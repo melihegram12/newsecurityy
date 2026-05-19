@@ -1,6 +1,6 @@
 {
   "name": "newsecurityy",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "private": true,
   "description": "Offline-oncelikli guvenlik paneli (Electron + web).",
   "author": "ENGINME1",
@@ -22,6 +22,7 @@
     "api:map": "python scripts/api_business_mapper.py --root . --out docs/api-business-mapping",
     "email:smoke": "electron scripts/email_scheduler_smoke.js",
     "feature:smoke": "electron scripts/full_feature_smoke.js",
+    "web": "cross-env PORT=4000 vite",
     "electron:dev": "concurrently \"cross-env BROWSER=none PORT=3001 npm start\" \"wait-on http://localhost:3001 && cross-env ELECTRON_DEV=true ELECTRON_RENDERER_URL=http://localhost:3001 electron .\"",
     "electron:build": "npm run build && electron-builder",
     "electron:build:lite": "powershell -ExecutionPolicy Bypass -File scripts/build-lite.ps1",
@@ -41,6 +42,9 @@
       "build/**/*",
       "electron/**/*",
       "public/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/sql.js/dist/**"
     ],
     "win": {
       "target": "nsis",

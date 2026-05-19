@@ -56,11 +56,17 @@ export const DEFAULT_FEATURE_FLAGS = Object.freeze({
 export const ROLE_SECURITY = 'SECURITY';
 export const ROLE_HR = 'HR';
 export const ROLE_DEVELOPER = 'DEVELOPER';
-export const resolveRoleFallbackPasswords = (env = process.env) => ({
-  [ROLE_SECURITY]: env.REACT_APP_SECURITY_PASSWORD || env.VITE_SECURITY_PASSWORD || '',
-  [ROLE_HR]: env.REACT_APP_HR_PASSWORD || env.VITE_HR_PASSWORD || '',
-  [ROLE_DEVELOPER]: env.REACT_APP_DEVELOPER_PASSWORD || env.VITE_DEVELOPER_PASSWORD || '',
-});
+const _viteEnv = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
+export const resolveRoleFallbackPasswords = (env = process.env) => {
+  // _viteEnv fallback yalnızca default env kullanıldığında geçerlidir;
+  // test gibi custom env geçildiğinde _viteEnv devre dışı kalır.
+  const vEnv = env === process.env ? _viteEnv : {};
+  return {
+    [ROLE_SECURITY]: env.REACT_APP_SECURITY_PASSWORD || env.VITE_SECURITY_PASSWORD || vEnv.VITE_SECURITY_PASSWORD || '',
+    [ROLE_HR]: env.REACT_APP_HR_PASSWORD || env.VITE_HR_PASSWORD || vEnv.VITE_HR_PASSWORD || '',
+    [ROLE_DEVELOPER]: env.REACT_APP_DEVELOPER_PASSWORD || env.VITE_DEVELOPER_PASSWORD || vEnv.VITE_DEVELOPER_PASSWORD || '',
+  };
+};
 export const ROLE_FALLBACK_PASSWORDS = Object.freeze(resolveRoleFallbackPasswords());
 export const ROLE_FALLBACK_USERS = {
   [ROLE_SECURITY]: { username: 'guvenlik_personeli', email: 'guvenlik@local' },

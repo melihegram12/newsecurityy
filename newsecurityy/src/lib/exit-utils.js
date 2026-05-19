@@ -125,5 +125,20 @@ export function resolveExitRecord({
     return { record: null, matches, reason: 'ambiguous' };
   }
 
+  // Cross sub-tab fallback: Araç plakası/ismi mevcut alt-sekmede bulunamadıysa,
+  // diğer alt-sekmelerde aktif kayıt var mı diye bak. Operatörün gün-sonu vardiya
+  // değişiminde yanlış sekmede olması veya kaydın farklı kategoride girilmiş
+  // olması durumunda "araç içerde ama çıkış yapamıyor" senaryosunu engeller.
+  if (mainTab === 'vehicle' && vehicleSubTab) {
+    const allActiveCandidates = getExitCandidates(activeLogs, mainTab, '');
+    const crossMatches = allActiveCandidates.filter((log) => matchesByTab(log, rawIdentifier, mainTab));
+    if (crossMatches.length === 1) {
+      return { record: crossMatches[0], matches: crossMatches, reason: 'identifier_cross_subtab' };
+    }
+    if (crossMatches.length > 1) {
+      return { record: null, matches: crossMatches, reason: 'ambiguous_cross_subtab' };
+    }
+  }
+
   return { record: null, matches: [], reason: 'not_found' };
 }
